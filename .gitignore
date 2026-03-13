@@ -1,0 +1,38 @@
+# OpenClaw internals (agent-private, not project state)
+WORKING.md
+MEMORY.md
+SOUL.md
+IDENTITY.md
+USER.md
+HEARTBEAT.md
+TOOLS.md
+.memory/
+memory/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies (uncomment as needed)
+# node_modules/
+# __pycache__/
+# *.pyc
+# venv/
+# .venv/
+
+# Build output (uncomment as needed)
+# dist/
+# build/
+# *.egg-info/
