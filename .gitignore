@@ -8,6 +8,7 @@ HEARTBEAT.md
 TOOLS.md
 .memory/
 memory/
+deprecated_ignore/
 
 # OS
 .DS_Store
