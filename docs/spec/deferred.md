@@ -24,8 +24,8 @@
 | `REQ-P4-004` | `sec-12-step-1-real-time-ast-indexing` | Signature extraction strips function bodies, retains structural signatures | Phase 4 | Part of AST indexing pipeline |
 | `REQ-P4-005` | `sec-12-step-2-lancedb-vector-memory-bus` | Embed AST signatures and agent decisions into LanceDB | Phase 4 | Depends on embedding model selection and LanceDB integration |
 | `REQ-P4-006` | `sec-12-step-3-scoped-context-compiler` | Dispatch compiles role persona + AST context + Decision Log history | Phase 4 | Three-input compiler is the Phase 4 deliverable |
-| `REQ-P4-007` | `sec-12-step-4-predictive-conflict-routing` | AST mutation comparison before merging worktrees | Phase 4 | Requires AST diff infrastructure |
-| `REQ-P4-008` | `sec-12-step-4-predictive-conflict-routing` | High structural conflict risk turns merge node red in UI | Phase 4 | UI indicator depends on AST-based risk scoring |
+| `REQ-P4-007` | `sec-12-step-4-predictive-conflict-routing` | AST mutation comparison before merging worktrees | Phase 4 | Requires AST diff infrastructure. **Linked to D-009/D-010:** upgrades RESOLVING trigger from Git-level to AST-level. |
+| `REQ-P4-008` | `sec-12-step-4-predictive-conflict-routing` | High structural conflict risk turns merge node red in UI | Phase 4 | UI indicator depends on AST-based risk scoring. **Linked to D-009/D-010:** populates `Worktree.conflict_risk` with real AST scores. |
 | `REQ-P4-009` | `sec-12-phase-4-success-kill-criteria` | Success: 20%+ token reduction, Decision Log sufficiency, no latency regression | Phase 4 | Exit criteria for Phase 4 |
 | `REQ-P4-010` | `sec-12-phase-4-success-kill-criteria` | Kill: offload vector DB if it causes runtime stutter | Phase 4 | Mitigation path for Phase 4 |
 
