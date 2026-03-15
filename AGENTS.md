@@ -5,10 +5,33 @@
 
 ## Project
 
-- **Name:** [PROJECT_NAME]
-- **Description:** [Brief description]
-- **Owner:** [Human owner / org]
-- **Repository:** [GitHub URL]
+- **Name:** Nexode
+- **Description:** Multi-Agent IDE and AI Constellation Manager — agent-centric multi-project orchestration for 10-15 parallel coding agents across 10-15 codebases.
+- **Owner:** jwells@gmail.com / Xcognis
+- **Repository:** https://github.com/onelouder/nexode.git
+
+## Specification Pin
+
+- **Authoritative spec:** `docs/spec/master-spec.md` (v2.0.1-locked, 2026-03-14)
+- **Stable section IDs:** `docs/spec/spec-outline.md`
+- **Extracted requirements:** `docs/spec/requirements-extracted.md`
+- **Deferred requirements:** `docs/spec/deferred.md`
+- **Contradiction resolutions:** `DECISIONS.md` (D-001 through D-008)
+
+All agents MUST cite spec section IDs (e.g., `sec-03-04-service-enums`) when proposing changes that touch the specification. No agent may modify the locked spec without recording a decision in `DECISIONS.md`.
+
+## Decomposition Guardrail
+
+> **CRITICAL:** Never ask an agent to "turn the spec into tasks and start implementing."
+> That fuses decomposition and coding and produces architectural contamination.
+
+The decomposition pipeline separates concerns into distinct stages:
+1. **Requirements** — extract and stabilize (Session 1)
+2. **Architecture** — domain model, boundaries, interfaces (Session 2)
+3. **Phase Plans** — phase-scoped feature sets and exit criteria (Session 3)
+4. **Implementation Tranches** — code-ready task packages (Session 4)
+
+Each stage produces a reviewed artifact before the next stage begins. Agents that generate code during stages 1-3 are operating out of scope.
 
 ## Agent Roster
 
