@@ -5,33 +5,35 @@
 
 ## Current Sprint
 
-- **Goal:** Sprint 1 — WAL-based crash recovery + Agent Harness abstraction + basic context compiler
+- **Goal:** Sprint 2 — Real Agent Integration + Critical Fixes
 - **Deadline:** 2026-03-29 (2 weeks from sprint start)
 - **Active Agent:** gpt
-- **Previous sprint:** Phase 0 Spike (complete, merged to main)
+- **Previous sprint:** Sprint 1 — WAL Recovery + Agent Harness (complete, merged to main)
 
 ## Tasks
 
-### Week 1: WAL Recovery
+### Week 1: Bug Fixes + Command Acknowledgment
 
-- [x] Read sprint docs: `.agents/CODEX-SPRINT-1.md`, `docs/architecture/wal-recovery.md`, `docs/architecture/agent-harness.md`
-- [x] Create branch `agent/gpt/sprint-1-wal-harness`
-- [x] Add dependencies: `bincode`, `sha2`, `crc32fast`, `uuid`, `async-trait`, `glob`
-- [x] Implement WAL persistence layer (`crates/nexode-daemon/src/wal.rs`) — framed binary format, CRC integrity, fsync writes
-- [x] Implement recovery logic (`crates/nexode-daemon/src/recovery.rs`) — checkpoint scan, WAL replay, PID checks, worktree verification
-- [x] Integrate WAL into `DaemonEngine` — write entries on state changes, periodic checkpoint, recovery-or-bootstrap startup
-- [x] WAL tests — checkpoint round-trip, WAL replay ordering, CRC corruption detection, config drift handling
+- [ ] Read sprint docs: `.agents/CODEX-SPRINT-2.md`, `docs/architecture/command-ack.md`, `docs/reviews/sprint-1-review.md`
+- [ ] Create branch `agent/gpt/sprint-2-real-agents`
+- [ ] **Fix I-009:** Change `completion_detected` semantics — non-zero exit always means failure. Add `requires_completion_signal()` to `AgentHarness` trait. Update `process.rs` logic.
+- [ ] **Fix I-010:** Emit `AgentStateChanged(Executing)` after `SlotAgentSwapped` in `engine.rs`.
+- [ ] **Fix I-015:** Replace JSON substring matching with `serde_json` parsing in `ClaudeCodeHarness` and `CodexCliHarness` completion detection. Add `serde_json` to deps.
+- [ ] **R-007:** Update proto — add `command_id` echo, `CommandOutcome` enum to `CommandResponse`.
+- [ ] **R-007:** Replace fire-and-forget channel with oneshot request/response in `transport.rs`.
+- [ ] **R-007:** Add command validation and result reporting in engine command handler.
+- [ ] **R-007:** Update `nexode-ctl` to display command results.
+- [ ] Unit tests for all fixes.
 
-### Week 2: Agent Harness + Context Compiler
+### Week 2: Live Integration + Demo
 
-- [x] Define `AgentHarness` trait in `crates/nexode-daemon/src/harness.rs`
-- [x] Refactor `build_mock_agent_command` into `MockHarness` implementing the trait
-- [x] Implement `ClaudeCodeHarness` — `claude --print` invocation, CLAUDE.md context injection, telemetry parsing
-- [x] Implement `CodexCliHarness` — `codex exec --full-auto --json` invocation, `.codex/instructions.md` context injection
-- [x] Implement basic context compiler (`crates/nexode-daemon/src/context.rs`) — task + globs + git diff + README
-- [x] Wire harness selection into engine (`start_slot` resolves harness from model/config)
-- [x] Add `harness` field to session.yaml slot config (optional, backward compatible)
-- [x] Harness tests — MockHarness backward compat, context compiler, harness selection, command shape validation
+- [ ] Add `live-test` feature flag to `nexode-daemon/Cargo.toml`.
+- [ ] Create `tests/live_harness.rs` with gated integration tests.
+- [ ] Live smoke test: ClaudeCode harness runs trivial task on temp repo.
+- [ ] Live smoke test: CodexCli harness runs trivial task on temp repo.
+- [ ] Live full lifecycle: agent completes → MoveTask → merge → DONE.
+- [ ] Create `scripts/demo.sh` end-to-end demo script.
+- [ ] Verify all existing tests still pass (`cargo test -p nexode-daemon`).
 
 ## Blocked
 
@@ -39,29 +41,17 @@
 
 ## Done This Sprint
 
-- Added `wal.rs` with framed binary WAL storage, CRC validation, replay, and compaction.
-- Added `recovery.rs` with checkpoint serialization, WAL replay, config-drift warnings, worktree verification, and Option A PID kill-and-respawn recovery.
-- Added `context.rs` with task/include/exclude/git diff/README context compilation.
-- Added `harness.rs` with `MockHarness`, `ClaudeCodeHarness`, and `CodexCliHarness`.
-- Kept the harness API synchronous and removed async case handling from this layer; process supervision remains in `process.rs`.
-- Extended `session.rs` with optional slot-level `harness` and `session_config_hash()`.
-- Refactored `process.rs` so harnesses provide commands, env, setup files, telemetry parsing, and completion detection.
-- Wired WAL, recovery, harness selection, context compilation, and checkpointing into `engine.rs`.
-- Fixed recovery bootstrap so recovered `Review`/`Done` slots are preserved and only `Pending` or restart-required slots are relaunched.
-- Added daemon-level recovery coverage for preserved review state across restart.
-- Verification is green: `cargo test -p nexode-daemon` and `cargo check --workspace`.
+(Updated as work progresses)
 
 ## Next Up
 
-- Push the branch and open Sprint 1 review.
-- Optional follow-up: add an opt-in live CLI smoke test path for installed `claude`/`codex` binaries.
-- Optional follow-up: add a daemon-level respawn integration test for a crash during `WORKING` if we introduce a controllable long-running test harness.
+- Sprint 3: Observer Loops + Safety (loop detection, uncertainty routing, sandbox enforcement, event sequence numbers)
 
 ## Notes
 
-- Sprint scope defined in `.agents/CODEX-SPRINT-1.md`
-- Architecture docs: `docs/architecture/wal-recovery.md`, `docs/architecture/agent-harness.md`
-- All Phase 0 decisions (D-002 through D-010) remain binding
-- Open issues from Phase 0 review: see `ISSUES.md`
-- Recovery strategy: Option A (kill + respawn, don't re-attach to surviving processes)
+- Sprint scope defined in `.agents/CODEX-SPRINT-2.md`
+- Architecture doc: `docs/architecture/command-ack.md`
+- All Phase 0 + Sprint 1 decisions remain binding
+- Open issues: see `ISSUES.md` — I-009, I-010, I-015 are Sprint 2 targets
+- Live tests gated behind `--features live-test` — require `claude` or `codex` CLI installed
 - Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`
