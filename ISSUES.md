@@ -116,14 +116,14 @@
 - **Details:** All three crates use `edition = "2024"`, which requires Rust 1.85+. This is the latest stable edition. If contributors or CI use older toolchains, they'll hit build failures.
 - **Mitigation:** Document MSRV in README.md or Cargo.toml `[package]` metadata. Intentional choice — just needs to be explicit.
 
-### R-007: `CommandResponse` is fire-and-forget
+### ~~R-007: `CommandResponse` is fire-and-forget~~ FIXED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** `transport.rs`
 - **Likelihood:** High (will matter in Sprint 1)
 - **Impact:** Medium (no feedback on command execution)
-- **Details:** `dispatch_command` always returns `success: true` as long as the channel is open, regardless of whether the command was processed or what happened. No request/response correlation.
-- **Mitigation:** Engine loop needs to add command acknowledgment with result status. Consider a command ID → result callback pattern.
+- **Fixed:** Sprint 2 (2026-03-15), branch `agent/gpt/sprint-2-real-agents`
+- **Resolution:** Full command acknowledgment via `oneshot::channel()`. Proto adds `command_id` and `CommandOutcome` enum. Engine validates slot existence and state transitions, returns `Executed`, `InvalidTransition`, or `SlotNotFound` through the oneshot. CLI prints formatted result. 5s timeout in production, 50ms in tests. Four tests cover the round-trip, timeout, and all outcome variants.
 
 ### I-007: Merge queue drains on tick only (2s delay)
 
@@ -141,21 +141,21 @@
 - **Details:** The daemon binary does manual `std::env::args()` parsing with `--flag value` matching, while `nexode-ctl` uses `clap` with derive macros. Minor inconsistency — no `--help` support on the daemon.
 - **When:** Whenever someone touches daemon CLI args.
 
-### I-009: `completion_detected` overrides non-zero exit as success
+### ~~I-009: `completion_detected` overrides non-zero exit as success~~ FIXED
 
 - **Source:** Sprint 1 review (2026-03-15), finding F-001
 - **Module:** `process.rs:325`
 - **Severity:** Medium
-- **Details:** `success: status.success() || completion_detected` means an agent that prints a completion marker early and then crashes with a non-zero exit code is reported as successful. Could silently promote a crashed agent to REVIEW instead of respawning.
-- **When:** Before real CLI agent testing. Review semantics — consider requiring both `completion_detected && status.success()` for true success.
+- **Fixed:** Sprint 2 (2026-03-15), branch `agent/gpt/sprint-2-real-agents`
+- **Resolution:** Success now requires `status.success() && (completion_detected || !requires_completion_signal)`. Four unit tests validate the full truth table: non-zero exit + marker = failure, zero exit + no marker + required = failure, zero exit + marker = success, zero exit + no marker + not required = success.
 
-### I-010: `AgentStateChanged(Executing)` dropped after swap
+### ~~I-010: `AgentStateChanged(Executing)` dropped after swap~~ FIXED
 
 - **Source:** Sprint 1 review (2026-03-15), finding F-003
 - **Module:** `engine.rs` (SlotAgentSwapped handler)
 - **Severity:** Medium
-- **Details:** The `AgentStateChanged(Executing)` event for the new agent was removed from the `SlotAgentSwapped` handler. After a crash-respawn, gRPC subscribers won't see the new agent enter `Executing` state — only the swap event. Regression from Phase 0 behavior.
-- **When:** Phase 2/3 when TUI or VS Code extension subscribes to agent state changes.
+- **Fixed:** Sprint 2 (2026-03-15), branch `agent/gpt/sprint-2-real-agents`
+- **Resolution:** `AgentStateChanged { agent_id: swapped.new_agent_id, new_state: Executing }` is now emitted immediately after `SlotAgentSwapped`. Test `slot_agent_swapped_emits_executing_event` validates the event stream.
 
 ### I-011: Recovery re-enqueues merge slot without worktree check
 
@@ -189,10 +189,45 @@
 - **Details:** Sprint instructions specified `codex --approval-mode full-auto`, but the implementation uses `codex exec --full-auto --json` (aligned to actual CLI). Architecture doc should be updated to match.
 - **When:** Next docs update by pc.
 
-### I-015: JSON substring matching in completion detection
+### ~~I-015: JSON substring matching in completion detection~~ FIXED
 
 - **Source:** Sprint 1 review (2026-03-15), finding F-010
 - **Module:** `harness.rs:177-178`
 - **Severity:** Low
-- **Details:** `ClaudeCodeHarness.detect_completion` uses `line.contains("\"type\":\"result\"")` — fragile against whitespace in JSON or the word "completed" in agent output. Combined with I-009, could cause false success.
-- **When:** Before real Claude Code CLI testing.
+- **Fixed:** Sprint 2 (2026-03-15), branch `agent/gpt/sprint-2-real-agents`
+- **Resolution:** Now uses `serde_json::from_str` + `json_field_is()` for proper JSON parsing. Test verifies `"task completed successfully"` no longer triggers false positives, while valid JSON result objects are correctly detected.
+
+### I-016: `is_valid_task_transition` diverges from Kanban State Machine spec
+
+- **Source:** Sprint 2 review (2026-03-15), finding F-001
+- **Module:** `engine.rs`, `is_valid_task_transition()`
+- **Severity:** Medium
+- **Details:** Two divergences from `docs/architecture/kanban-state-machine.md`:
+  1. `MergeQueue → Paused` is allowed but not in the spec's exhaustive transition table.
+  2. `Paused → Working` and `Paused → MergeQueue` are allowed unconditionally, but the spec requires tracking the pre-pause state ("if was WORKING" / "if was queued"). No pre-pause state is stored.
+- **Impact:** Could allow semantically wrong transitions (e.g., pause a REVIEW slot and resume to WORKING, bypassing re-review). Non-blocking for now since the daemon only pauses WORKING slots.
+- **When:** Before adding operator pause commands or UI pause controls.
+
+### I-017: `AgentStateChanged` proto missing `slot_id` field
+
+- **Source:** Sprint 2 review (2026-03-15), finding F-002
+- **Module:** `nexode.proto`, `AgentStateChanged` message
+- **Severity:** Low
+- **Details:** The `AgentStateChanged` proto message only has `agent_id` and `new_state`. TUI/extension subscribers who need to update a slot's visual state after a swap must correlate `agent_id` from `AgentStateChanged` with `new_agent_id` from the preceding `SlotAgentSwapped` event. If events arrive out of order or the swap event is missed, the UI can't determine which slot changed.
+- **When:** Phase 2/3 when TUI or VS Code extension consumes the event stream.
+
+### I-018: `parse_json_summary_telemetry` could double-count on multiple result lines
+
+- **Source:** Sprint 2 review (2026-03-15), finding F-003
+- **Module:** `harness.rs`, `parse_json_summary_telemetry()`
+- **Severity:** Low
+- **Details:** The function fires on lines where `type == "result"`, `event == "done"`, or `status == "completed"`. If a CLI ever emits multiple result-type lines, each matching line with usage fields produces a `ParsedTelemetry`, and the engine's `apply_telemetry` increments cumulative totals — causing double-counting. In practice, Claude emits exactly one `type: "result"` line, so current risk is low.
+- **When:** When adding support for new CLI agents or if Claude/Codex output format changes.
+
+### I-019: `demo.sh` doesn't wait for DONE after MoveTask
+
+- **Source:** Sprint 2 review (2026-03-15), finding F-005
+- **Module:** `scripts/demo.sh`
+- **Severity:** Low
+- **Details:** After sending `dispatch move-task slot-a merge-queue`, the script immediately prints status and exits. The merge happens asynchronously on the daemon's tick interval (2s), so "Final status" may still show `merge_queue` instead of `done`.
+- **When:** Minor cosmetic. Consider adding a wait loop for DONE after the MoveTask dispatch.
