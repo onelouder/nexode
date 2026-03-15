@@ -44,6 +44,7 @@ Sprint 2 proves the daemon works with real CLI agents end-to-end. Three pillars:
 - **Live integration**
   - Added gated `live-test` smoke tests for Claude and Codex harnesses.
   - Added `scripts/demo.sh` for an end-to-end local demo flow.
+  - Fixed the Claude live harness contract so the daemon now requests JSON stream output, detects completion correctly, and records final usage/cost telemetry.
 
 ## Key Decisions Captured In Code
 
@@ -64,10 +65,12 @@ Sprint 2 proves the daemon works with real CLI agents end-to-end. Three pillars:
 - `cargo test -p nexode-ctl`
 - `cargo check --workspace`
 - `ANTHROPIC_API_KEY= OPENAI_API_KEY= cargo test -p nexode-daemon --features live-test --test live_harness -- --nocapture`
+- `cargo test -p nexode-daemon --features live-test --test live_harness live_claude_code_hello_world -- --nocapture` with a real Claude API key
+- `cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` with a real Claude API key
 
 ## Remaining Review Focus
 
-- Run at least one credential-backed live smoke test before merge if Claude or Codex CLI access is available.
+- Codex live smoke coverage is still unverified in this environment.
 - Confirm the command-ack outcome surface is sufficient for planned UI/client behavior.
 
 ## What NOT to Change

@@ -24,7 +24,7 @@ async fn live_claude_code_hello_world() {
     };
 
     let result = run_live_task(harness, false).await;
-    assert!(result.worktree_file.exists());
+    assert!(result.worktree_file_found);
     assert!(result.file_contents.contains("hello"));
     assert!(result.total_tokens > 0, "expected non-zero telemetry");
 }
@@ -37,7 +37,7 @@ async fn live_codex_cli_hello_world() {
     };
 
     let result = run_live_task(harness, false).await;
-    assert!(result.worktree_file.exists());
+    assert!(result.worktree_file_found);
     assert!(result.file_contents.contains("hello"));
     assert!(result.total_tokens > 0, "expected non-zero telemetry");
 }
@@ -50,13 +50,13 @@ async fn live_full_lifecycle() {
     };
 
     let result = run_live_task(harness, true).await;
-    assert!(result.repo_file.exists());
+    assert!(result.repo_file_found);
     assert!(result.file_contents.contains("hello"));
 }
 
 struct LiveRunResult {
-    worktree_file: PathBuf,
-    repo_file: PathBuf,
+    worktree_file_found: bool,
+    repo_file_found: bool,
     file_contents: String,
     total_tokens: u64,
 }
@@ -119,8 +119,9 @@ async fn run_live_task(harness: LiveHarness, full_lifecycle: bool) -> LiveRunRes
         .iter()
         .find(|slot| slot.id == "slot-a")
         .expect("slot-a in snapshot");
-    let worktree_file = PathBuf::from(&slot.worktree_id).join("hello.rs");
-    let repo_file = fixture.repo.join("hello.rs");
+    let worktree_root = PathBuf::from(&slot.worktree_id);
+    let worktree_file = locate_generated_file(&worktree_root).expect("generated file in worktree");
+    let worktree_file_found = true;
     let file_contents = fs::read_to_string(&worktree_file).expect("read generated file");
 
     if full_lifecycle {
@@ -139,6 +140,7 @@ async fn run_live_task(harness: LiveHarness, full_lifecycle: bool) -> LiveRunRes
         assert_eq!(response.outcome, CommandOutcome::Executed as i32);
 
         let done_snapshot = wait_for_status(&mut client, "slot-a", TaskStatus::Done).await;
+        let repo_file_found = locate_generated_file(&fixture.repo).is_some();
         shutdown_tx.send(()).expect("signal shutdown");
         server
             .await
@@ -146,8 +148,8 @@ async fn run_live_task(harness: LiveHarness, full_lifecycle: bool) -> LiveRunRes
             .expect("daemon exits cleanly");
 
         return LiveRunResult {
-            worktree_file,
-            repo_file,
+            worktree_file_found,
+            repo_file_found,
             file_contents,
             total_tokens: done_snapshot.projects[0].slots[0].total_tokens,
         };
@@ -160,8 +162,8 @@ async fn run_live_task(harness: LiveHarness, full_lifecycle: bool) -> LiveRunRes
         .expect("daemon exits cleanly");
 
     LiveRunResult {
-        worktree_file,
-        repo_file,
+        worktree_file_found,
+        repo_file_found: false,
         file_contents,
         total_tokens: review_snapshot.projects[0].slots[0].total_tokens,
     }
@@ -294,6 +296,12 @@ fn command_exists(name: &str) -> bool {
 
 fn has_non_empty_env(name: &str) -> bool {
     matches!(env::var(name), Ok(value) if !value.trim().is_empty())
+}
+
+fn locate_generated_file(root: &Path) -> Option<PathBuf> {
+    [root.join("hello.rs"), root.join("src/hello.rs")]
+        .into_iter()
+        .find(|path| path.exists())
 }
 
 fn run_git<const N: usize>(cwd: &Path, args: [&str; N]) {

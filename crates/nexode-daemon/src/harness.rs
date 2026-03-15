@@ -150,6 +150,9 @@ impl AgentHarness for ClaudeCodeHarness {
             "claude",
             vec![
                 "-p",
+                "--verbose",
+                "--output-format",
+                "stream-json",
                 "--permission-mode",
                 "bypassPermissions",
                 "--model",
@@ -171,7 +174,7 @@ impl AgentHarness for ClaudeCodeHarness {
     }
 
     fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry> {
-        parse_keyed_telemetry(line)
+        parse_json_summary_telemetry(line).or_else(|| parse_keyed_telemetry(line))
     }
 
     fn requires_completion_signal(&self) -> bool {
@@ -220,7 +223,9 @@ impl AgentHarness for CodexCliHarness {
     }
 
     fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry> {
-        parse_keyed_telemetry(line).or_else(|| ParsedTelemetry::parse(line))
+        parse_json_summary_telemetry(line)
+            .or_else(|| parse_keyed_telemetry(line))
+            .or_else(|| ParsedTelemetry::parse(line))
     }
 
     fn requires_completion_signal(&self) -> bool {
@@ -264,6 +269,59 @@ fn parse_keyed_telemetry(line: &str) -> Option<ParsedTelemetry> {
     }
 
     found.then_some(telemetry)
+}
+
+fn parse_json_summary_telemetry(line: &str) -> Option<ParsedTelemetry> {
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return None;
+    };
+    if !json_value_field_is(&value, "type", "result")
+        && !json_value_field_is(&value, "event", "done")
+        && !json_value_field_is(&value, "status", "completed")
+    {
+        return None;
+    }
+
+    let telemetry = ParsedTelemetry {
+        tokens_in: json_u64_at_paths(
+            &value,
+            &[
+                &["usage", "input_tokens"],
+                &["usage", "inputTokens"],
+                &["usage", "prompt_tokens"],
+                &["usage", "promptTokens"],
+                &["input_tokens"],
+                &["inputTokens"],
+            ],
+        ),
+        tokens_out: json_u64_at_paths(
+            &value,
+            &[
+                &["usage", "output_tokens"],
+                &["usage", "outputTokens"],
+                &["usage", "completion_tokens"],
+                &["usage", "completionTokens"],
+                &["output_tokens"],
+                &["outputTokens"],
+            ],
+        ),
+        cost_usd: json_f64_at_paths(
+            &value,
+            &[
+                &["total_cost_usd"],
+                &["cost_usd"],
+                &["usage", "total_cost_usd"],
+                &["usage", "cost_usd"],
+                &["totalCostUsd"],
+                &["costUsd"],
+            ],
+        ),
+    };
+
+    (telemetry.tokens_in.is_some()
+        || telemetry.tokens_out.is_some()
+        || telemetry.cost_usd.is_some())
+    .then_some(telemetry)
 }
 
 fn render_context_document(context: &ContextPayload) -> String {
@@ -311,7 +369,41 @@ fn json_field_is(line: &str, field: &str, expected: &str) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
         return false;
     };
+    json_value_field_is(&value, field, expected)
+}
+
+fn json_value_field_is(value: &Value, field: &str, expected: &str) -> bool {
     value.get(field).and_then(Value::as_str) == Some(expected)
+}
+
+fn json_u64_at_paths(value: &Value, paths: &[&[&str]]) -> Option<u64> {
+    paths
+        .iter()
+        .find_map(|path| json_value_at_path(value, path).and_then(json_as_u64))
+}
+
+fn json_f64_at_paths(value: &Value, paths: &[&[&str]]) -> Option<f64> {
+    paths
+        .iter()
+        .find_map(|path| json_value_at_path(value, path).and_then(json_as_f64))
+}
+
+fn json_value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    path.iter()
+        .try_fold(value, |current, segment| current.get(*segment))
+}
+
+fn json_as_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|raw| u64::try_from(raw).ok()))
+}
+
+fn json_as_f64(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_u64().map(|raw| raw as f64))
+        .or_else(|| value.as_i64().map(|raw| raw as f64))
 }
 
 fn shell_quote(value: &str) -> String {
@@ -349,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_command_writes_claude_md_and_uses_print_mode() {
+    fn claude_command_writes_claude_md_and_uses_stream_json_print_mode() {
         let harness = ClaudeCodeHarness;
         let command = harness
             .build_command(
@@ -367,6 +459,9 @@ mod tests {
 
         assert_eq!(command.program.to_string_lossy(), "claude");
         assert!(command.args.iter().any(|arg| arg == "-p"));
+        assert!(command.args.iter().any(|arg| arg == "--verbose"));
+        assert!(command.args.iter().any(|arg| arg == "--output-format"));
+        assert!(command.args.iter().any(|arg| arg == "stream-json"));
         assert!(
             command
                 .setup_files
@@ -415,6 +510,41 @@ mod tests {
         assert!(codex.detect_completion(r#"{"event":"done"}"#));
         assert!(codex.detect_completion(r#"{"status":"completed"}"#));
         assert!(!codex.detect_completion(r#"{"event":"progress"}"#));
+    }
+
+    #[test]
+    fn real_harnesses_parse_json_summary_telemetry_without_counting_partial_messages() {
+        let claude = ClaudeCodeHarness;
+        let codex = CodexCliHarness;
+
+        assert_eq!(
+            claude.parse_telemetry(
+                r#"{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":3}}}"#,
+            ),
+            None
+        );
+
+        assert_eq!(
+            claude.parse_telemetry(
+                r#"{"type":"result","subtype":"success","total_cost_usd":0.034365,"usage":{"input_tokens":10,"output_tokens":48}}"#,
+            ),
+            Some(ParsedTelemetry {
+                tokens_in: Some(10),
+                tokens_out: Some(48),
+                cost_usd: Some(0.034365),
+            })
+        );
+
+        assert_eq!(
+            codex.parse_telemetry(
+                r#"{"status":"completed","usage":{"inputTokens":12,"outputTokens":7},"costUsd":0.08}"#,
+            ),
+            Some(ParsedTelemetry {
+                tokens_in: Some(12),
+                tokens_out: Some(7),
+                cost_usd: Some(0.08),
+            })
+        );
     }
 
     fn base_slot(model: &str) -> SlotConfig {

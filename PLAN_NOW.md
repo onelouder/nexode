@@ -53,16 +53,22 @@
   - `nexode-ctl` prints real command outcomes
 - Added process, transport, engine, harness, and CLI tests for Sprint 2 behavior.
 - Added gated live harness integration tests and `scripts/demo.sh`.
+- Fixed the Claude live harness command/output contract and live-test assumptions discovered during credential-backed verification:
+  - Claude now runs with `--verbose --output-format stream-json`
+  - final JSON usage is parsed into telemetry without counting partial assistant messages
+  - live tests no longer assume temp fixture paths survive teardown or that non-merged files already exist in the repo
 - Verified local test suite:
   - `cargo test -p nexode-daemon`
   - `cargo test -p nexode-ctl`
   - `cargo check --workspace`
   - `cargo test -p nexode-daemon --features live-test --test live_harness` with blanked keys to confirm compile/self-skip path
+  - `cargo test -p nexode-daemon --features live-test --test live_harness live_claude_code_hello_world -- --nocapture` with a real Claude API key
+  - `cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` with a real Claude API key
 
 ## Next Up
 
 - Review `agent/gpt/sprint-2-real-agents`.
-- Run at least one real live harness smoke test with valid CLI credentials before merge if CLI access is available.
+- Optional: run the Codex live smoke path in an environment with `codex` plus `OPENAI_API_KEY`.
 - Sprint 3: Observer Loops + Safety (loop detection, uncertainty routing, sandbox enforcement, event sequence numbers)
 
 ## Notes
@@ -72,5 +78,5 @@
 - All Phase 0 + Sprint 1 decisions remain binding
 - Open issues: see `ISSUES.md` — I-009, I-010, I-015 are Sprint 2 targets
 - Live tests gated behind `--features live-test` — require `claude` or `codex` CLI installed
-- Live harness tests are implemented and compile; real credential-backed execution is still pending in this environment
+- Real credential-backed Claude live verification is complete; Codex live verification is still pending
 - Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`
