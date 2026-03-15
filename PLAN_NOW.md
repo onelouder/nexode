@@ -65,7 +65,7 @@
 ## Next Up
 
 - pc reviews `agent/gpt/sprint-3-observer-safety`
-- After review: push branch, open PR, and decide whether any follow-up is needed for unresolved non-sprint issues (`I-016`, `I-018`, `I-019`)
+- After review: open PR, merge, and decide whether any follow-up is needed for unresolved non-sprint issues (`I-016`, `I-018`, `I-019`)
 
 ## Notes
 

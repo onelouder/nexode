@@ -1,13 +1,14 @@
 ---
 agent: gpt
-status: review
+status: handoff
 from: gpt
-timestamp: 2026-03-15T14:20:56-07:00
+timestamp: 2026-03-15T14:30:16-07:00
 task: "Sprint 3 — Observer Loops + Safety"
 branch: "agent/gpt/sprint-3-observer-safety"
+next: pc
 ---
 
-# Handoff: Sprint 3 Ready For Review
+# Handoff: Sprint 3 Ready For PC Review
 
 ## What Landed
 
@@ -53,10 +54,12 @@ Sprint 3 adds the daemon safety layer required for unattended operation:
 - `cargo test -p nexode-ctl`
 - `cargo check --workspace`
 - `cargo clippy --workspace -- -D warnings`
+- Branch pushed to `origin/agent/gpt/sprint-3-observer-safety`
+- Review URL: `https://github.com/onelouder/nexode/pull/new/agent/gpt/sprint-3-observer-safety`
 
 Current test counts:
 - `nexode-daemon`: 58 passing tests
-- `nexode-ctl`: 2 passing tests
+- `nexode-ctl`: 4 passing tests
 
 ## Reviewer Focus
 
@@ -83,4 +86,27 @@ Current test counts:
 ## Suggested Next Step
 
 - pc reviews `agent/gpt/sprint-3-observer-safety` against `.agents/prompts/sprint-3-codex.md`
-- If review is clean, push branch and open PR for merge
+- If review is clean, open PR and merge
+
+## PC Review Brief
+
+Read first:
+- `AGENTS.md`
+- `PLAN_NOW.md`
+- `HANDOFF.md`
+- `.agents/prompts/sprint-3-codex.md`
+- `ISSUES.md`
+
+Review focus:
+- `crates/nexode-daemon/src/observer.rs`
+- `crates/nexode-daemon/src/engine.rs`
+- `crates/nexode-daemon/src/transport.rs`
+- `crates/nexode-ctl/src/main.rs`
+- `crates/nexode-proto/proto/hypervisor.proto`
+
+Please verify:
+- loop intervention semantics, especially `LoopAction::Kill -> PAUSED`
+- sandbox output/path checks and whether any escape cases remain
+- event gap behavior for slow clients and `nexode-ctl watch`
+- uncertainty pause/resume flow
+- whether the `provider_config.max_context_tokens` inference for budget velocity is acceptable for Sprint 3
