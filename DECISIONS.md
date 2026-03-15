@@ -22,7 +22,7 @@
 
 - **Date:** 2026-03-14
 - **By:** pc
-- **Status:** PROPOSED
+- **Status:** SUPERSEDED by D-009
 - **Context:** The `TaskStatus` enum (`sec-03-04-service-enums`) defines `PENDING`, `WORKING`, `REVIEW`, `DONE`, `PAUSED`, and `ARCHIVED` — but no `MERGED`. The Macro Kanban Board (`sec-05-macro-kanban-board-task-queue`) lists `Merged` as a first-class column. The spec never clarifies whether `Merged` is UI-only, a missing enum value, or a synonym for `Done`.
 - **Decision:** Add `TASK_STATUS_MERGED = 7` to the `TaskStatus` enum in `hypervisor.proto v2`. `Merged` is a distinct lifecycle state between `DONE` and `ARCHIVED`: the task's worktree has been successfully merged into the target branch. The Kanban column maps 1:1 to this enum value.
 - **Rationale:** Treating `Merged` as UI-only would force Layer 3 renderers to infer merge state from worktree metadata, violating the principle that the daemon is the single source of truth for task lifecycle. A dedicated enum value keeps the Kanban columns isomorphic with the protocol.
@@ -60,9 +60,14 @@
 - **By:** pc
 - **Status:** PROPOSED
 - **Context:** Section 4.1 and Phase 0 (`sec-04-01-design-principles`, `sec-08-week-1-foundation`) state the defaults cascade is `session > project > slot`. The `session.yaml v2` schema (`sec-04-02-complete-schema-annotations`) defines a session-level `defaults` block but not a project-level one. Project-local defaults appear only in the `.nexode.yaml` example (`sec-04-04-per-project-nexode-yaml`), which is repo-local, not session-level.
-- **Decision:** Add an optional `defaults` block at project level inside `session.yaml v2`, with the same shape as the session-level defaults (model, mode, timeout, provider). The cascade becomes: session defaults → project defaults (in session.yaml) → `.nexode.yaml` repo-local overrides → slot-level fields. When a project entry in session.yaml has a `defaults` block, those values override session defaults for all slots in that project. `.nexode.yaml` overrides are then merged on top.
-- **Rationale:** Without a project-level defaults block in the session YAML, the only way to set per-project defaults is through `.nexode.yaml` in each repo. This breaks for non-git projects and forces the human to maintain defaults outside the session file. Adding the block fulfills the documented cascade promise.
-- **Consequences:** The YAML schema field reference (`sec-04-03-project-level-fields`) gains a `defaults` entry. Session Config Manager merge order becomes: session.defaults → projects[].defaults → .nexode.yaml → slots[].{field}. A spec amendment note shall be appended to the normalized spec.
+- **Decision:** Add an optional `defaults` block at project level inside `session.yaml v2`, with the same shape as the session-level defaults (model, mode, timeout, provider, context). The cascade becomes: session defaults → project defaults (in session.yaml) → `.nexode.yaml` repo-local overrides → slot-level fields. When a project entry in session.yaml has a `defaults` block, those values override session defaults for all slots in that project. `.nexode.yaml` overrides are then merged on top.
+- **Merge strategy (D-004a, amended 2026-03-14):** The cascade MUST use type-aware merging, not naive scalar override:
+  - **Scalars** (`model`, `mode`, `timeout`): Deep override. The most specific tier wins (slot > repo > project > session).
+  - **Arrays** (`tags`, `context.include`, `context.exclude`): Unique union merge. Values from all tiers are combined and deduplicated. Example: if session defines `context.exclude: ["node_modules/**"]` and `.nexode.yaml` defines `context.exclude: ["dist/**"]`, the resolved value is `["node_modules/**", "dist/**"]`.
+  - **Maps** (`provider_config`): Shallow merge by key. Lower-tier keys override; keys absent at lower tiers are inherited from higher tiers.
+  - **Explicit clear:** A slot or repo-local config may use `context.exclude: []` (empty array) to explicitly clear inherited exclusions. An empty array is a deliberate override, not a no-op.
+- **Rationale:** Without a project-level defaults block in the session YAML, the only way to set per-project defaults is through `.nexode.yaml` in each repo. This breaks for non-git projects and forces the human to maintain defaults outside the session file. Adding the block fulfills the documented cascade promise. Without type-aware merging, a repo-local `context.exclude` would obliterate session-level exclusions, causing immediate context window bloat and budget burn.
+- **Consequences:** The YAML schema field reference (`sec-04-03-project-level-fields`) gains a `defaults` entry. Session Config Manager merge order becomes: session.defaults → projects[].defaults → .nexode.yaml → slots[].{field}, with type-aware merge at each tier boundary. A spec amendment note shall be appended to the normalized spec. Implementers must test the union-merge behavior for `context.include` and `context.exclude` arrays specifically — incorrect merge here directly impacts token consumption and cost.
 
 ---
 
@@ -110,5 +115,35 @@
 - **Status:** PROPOSED
 - **Context:** Phase 0 kill criteria (`sec-08-kill-criteria`) say to stop "if the merge step consistently produces broken code." Phase 0 deliverables (`sec-08-week-1-foundation`, `sec-08-week-2-agent-lifecycle`) cover session parsing, lifecycle, budgeting, multi-repo worktree creation, and crash recovery — but do not list Merge Choreography or a UI merge queue.
 - **Decision:** In Phase 0 context, "the merge step" means the daemon's programmatic `git merge` of a slot's worktree branch back into the project's main branch after the task is marked `DONE`. This is a basic git operation in the Agent Process Manager / Git Worktree Orchestrator, not the Phase 3 Merge Choreography UI. The kill criterion tests whether isolated worktree branches can be cleanly merged after agent work completes. If automated merges consistently break (compile failures, test regressions), the worktree isolation strategy is invalid and the project should stop.
-- **Rationale:** Phase 0 is a 2-week spike. The kill criterion must be testable within that scope. Programmatic `git merge` + test verification is achievable. Full Merge Choreography with UI, conflict-risk scoring, and human approvals is Phase 3 scope.
-- **Consequences:** Phase 0 exit criteria include: "automated worktree merge succeeds without manual conflict resolution for at least N test tasks." Phase 0 does NOT require Merge Choreography UI, structural conflict scoring, or human approval queues.
+- **Post-merge verification (D-008a, amended 2026-03-14):** A successful `git merge` is necessary but NOT sufficient proof of multi-agent viability. Git is syntactically aware but semantically blind: if Agent A alters a function signature in Worktree A and Agent B writes a new module calling the old signature in Worktree B, `git merge` will succeed but the build will fail. Phase 0 exit criteria MUST include a post-merge verification step:
+  1. After each programmatic merge to the target branch, the daemon runs the project's configured build command (e.g., `cargo build`, `npm run build`).
+  2. If the project has a test suite, the daemon runs it (e.g., `cargo test`, `npm test`).
+  3. A merge is only counted as "successful" for kill-criteria purposes if both the git operation AND post-merge verification pass.
+  4. The kill criterion becomes: "N consecutive merge-then-verify cycles succeed without manual intervention." A git-clean but build-broken merge counts as a failure.
+  - **Implementation note for Phase 0:** The build/test commands should be configurable per-project in `session.yaml` (e.g., `verify: { build: "cargo build", test: "cargo test" }`). This field is not in the current schema — add it as a project-level field when implementing Phase 0. Until Phase 4's Predictive Conflict Routing can catch semantic conflicts before merge, post-merge build verification is the only safety net against semantically silent merge corruption.
+- **Rationale:** Phase 0 is a 2-week spike. The kill criterion must be testable within that scope. Programmatic `git merge` + post-merge build/test verification is achievable. Full Merge Choreography with UI, conflict-risk scoring, and human approvals is Phase 3 scope.
+- **Consequences:** Phase 0 exit criteria include: "automated worktree merge succeeds AND post-merge build/test passes without manual conflict resolution for at least N test tasks." Phase 0 does NOT require Merge Choreography UI, structural conflict scoring, or human approval queues. A new `verify` field is needed at the project level in session.yaml.
+
+---
+
+## D-009: Kanban state machine with MERGE_QUEUE and RESOLVING (supersedes D-001)
+
+- **Date:** 2026-03-14
+- **By:** jwells + pc
+- **Status:** PROPOSED
+- **Context:** D-001 proposed adding a single `TASK_STATUS_MERGED = 7` to bridge the gap between the spec's Kanban "Merged" column and the proto enum. However, this treats merge as an atomic event rather than a pipeline. When 10-15 agents finish tasks on the same project simultaneously, direct `REVIEW → merge` transitions cause locking collisions. The spec conflates agent execution state with task integration state. A proper resolution must decouple "Did the agent do the right thing?" (REVIEW) from "Does this code integrate with the current repo state?" (merge pipeline).
+- **Decision:** Replace `TASK_STATUS_MERGED` with two new states: `TASK_STATUS_MERGE_QUEUE = 4` (semantic approval granted, awaiting structural integration) and `TASK_STATUS_RESOLVING = 5` (blocked by AST/Git conflict, human intervention required). `DONE` (renumbered to 6) now strictly means "code committed to target branch, worktree GC'd." The "merged" concept is absorbed into DONE — there is no state where code is merged but the task is not done. Full schema, state transitions, barrier synchronization, and autonomy tier overrides are specified in `docs/architecture/kanban-state-machine.md`.
+- **Rationale:** MERGE_QUEUE acts as a per-project serialization buffer: the Orchestrator pulls tasks from the queue one at a time, rebases against the latest target branch, and attempts a fast-forward merge. This prevents race conditions and main-branch corruption. RESOLVING makes conflict state explicit rather than hiding it inside a generic "blocked" status. Together they give the Kanban board 1:1 isomorphism with the proto enum — no UI-only columns.
+- **Consequences:** (1) `TaskStatus` enum renumbered: MERGE_QUEUE=4, RESOLVING=5, DONE=6, PAUSED=7, ARCHIVED=8. (2) Orchestrator must implement a per-project FIFO merge queue. (3) Barrier synchronization required for `MERGE_QUEUE → DONE → Worktree GC` transitions to prevent UI tearing. (4) Autonomy tier override: `full_auto` bypasses REVIEW and pushes directly to MERGE_QUEUE. (5) D-001 is superseded.
+
+---
+
+## D-010: RESOLVING state requires Phase 4 Predictive Conflict Routing for full capability
+
+- **Date:** 2026-03-14
+- **By:** jwells + pc
+- **Status:** PROPOSED
+- **Context:** D-009 introduces `TASK_STATUS_RESOLVING` with two trigger paths of different sophistication. The basic trigger (Git merge failure) is available immediately. The advanced trigger (AST mutation comparison that catches semantically dangerous merges Git would silently accept) depends on Phase 4 infrastructure: Tree-sitter AST indexing (`REQ-P4-003`, `REQ-P4-004`), LanceDB vector storage (`REQ-P4-005`), and Predictive Conflict Routing (`REQ-P4-007`, `REQ-P4-008`).
+- **Decision:** The `RESOLVING` state and its associated Kanban column SHALL be implemented in Phase 0 with Git-level conflict detection as the sole trigger. In Phase 4, the trigger is upgraded: before the Orchestrator attempts `git merge`, the Predictive Conflict Routing subsystem compares AST mutations across the worktree branch and the target branch. If structural conflict risk exceeds a configurable threshold, the task transitions to `RESOLVING` proactively — before Git sees it. This catches the dangerous case where Git can merge text cleanly but the result has incompatible type signatures, broken imports, or semantic regressions.
+- **Rationale:** The state machine must be stable from Phase 0 onward — agents and UI should never need to learn a new workflow. Only the trigger sophistication improves across phases. Deferring the state itself to Phase 4 would leave Phase 0-3 without a conflict resolution workflow.
+- **Consequences:** (1) Phase 0-3: RESOLVING triggered only by `git merge` failure. Adequate for textual conflicts. (2) Phase 4+: RESOLVING additionally triggered by AST conflict risk scoring before merge attempt. (3) The `conflict_risk` field on the `Worktree` message gains operational significance in Phase 4 when the AST parser populates it with real scores. (4) Deferred requirements `REQ-P4-007` and `REQ-P4-008` in `docs/spec/deferred.md` are formally linked to D-009/D-010 as Phase 4 upgrade dependencies.
