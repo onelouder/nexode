@@ -1,11 +1,12 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use nexode_proto::hypervisor_client::HypervisorClient;
 use nexode_proto::hypervisor_event;
+use nexode_proto::observer_alert;
 use nexode_proto::operator_command;
 use nexode_proto::{
     AgentMode, CommandOutcome, CommandResponse, FullStateSnapshot, KillAgent, KillProject,
-    MoveTask, OperatorCommand, PauseAgent, ResumeAgent, SetAgentMode, SlotDispatch, StateRequest,
-    SubscribeRequest, TaskStatus,
+    MoveTask, ObserverIntervention, OperatorCommand, PauseAgent, ResumeAgent, ResumeSlot,
+    SetAgentMode, SlotDispatch, StateRequest, SubscribeRequest, TaskStatus,
 };
 use tonic::Request;
 
@@ -52,6 +53,11 @@ enum DispatchCommand {
     ResumeAgent {
         agent_id: String,
     },
+    ResumeSlot {
+        slot_id: String,
+        #[arg(required = false, num_args = 0.., trailing_var_arg = true)]
+        instruction: Vec<String>,
+    },
     KillAgent {
         agent_id: String,
     },
@@ -95,6 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             print_snapshot(&snapshot);
         }
         Command::Watch => {
+            let mut last_sequence = 0u64;
             let mut stream = client
                 .subscribe_events(Request::new(SubscribeRequest {
                     client_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -102,8 +109,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?
                 .into_inner();
 
-            while let Some(event) = stream.message().await? {
-                println!("{}", format_event(&event));
+            loop {
+                match stream.message().await {
+                    Ok(Some(event)) => {
+                        if last_sequence != 0 && event.event_sequence != last_sequence + 1 {
+                            let snapshot = client
+                                .get_full_state(Request::new(StateRequest {}))
+                                .await?
+                                .into_inner();
+                            println!(
+                                "warning: event gap detected (expected {}, got {}); snapshot refreshed at sequence {}",
+                                last_sequence + 1,
+                                event.event_sequence,
+                                snapshot.last_event_sequence
+                            );
+                            last_sequence = snapshot.last_event_sequence;
+                            continue;
+                        }
+                        last_sequence = event.event_sequence;
+                        println!("{}", format_event(&event));
+                    }
+                    Ok(None) => break,
+                    Err(status) if status.code() == tonic::Code::DataLoss => {
+                        let snapshot = client
+                            .get_full_state(Request::new(StateRequest {}))
+                            .await?
+                            .into_inner();
+                        println!(
+                            "warning: {}; snapshot refreshed at sequence {}",
+                            status.message(),
+                            snapshot.last_event_sequence
+                        );
+                        last_sequence = snapshot.last_event_sequence;
+                        stream = client
+                            .subscribe_events(Request::new(SubscribeRequest {
+                                client_version: env!("CARGO_PKG_VERSION").to_string(),
+                            }))
+                            .await?
+                            .into_inner();
+                    }
+                    Err(status) => return Err(status.into()),
+                }
             }
         }
         Command::Dispatch { command } => {
@@ -147,6 +193,13 @@ fn build_command(command: DispatchCommand) -> OperatorCommand {
         DispatchCommand::ResumeAgent { agent_id } => {
             operator_command::Action::ResumeAgent(ResumeAgent { agent_id })
         }
+        DispatchCommand::ResumeSlot {
+            slot_id,
+            instruction,
+        } => operator_command::Action::ResumeSlot(ResumeSlot {
+            slot_id,
+            instruction: instruction.join(" "),
+        }),
         DispatchCommand::KillAgent { agent_id } => {
             operator_command::Action::KillAgent(KillAgent { agent_id })
         }
@@ -166,8 +219,8 @@ fn build_command(command: DispatchCommand) -> OperatorCommand {
 
 fn print_snapshot(snapshot: &FullStateSnapshot) {
     println!(
-        "session cost ${:.2} / ${:.2}",
-        snapshot.total_session_cost, snapshot.session_budget_max_usd
+        "session cost ${:.2} / ${:.2}  last_event_sequence {}",
+        snapshot.total_session_cost, snapshot.session_budget_max_usd, snapshot.last_event_sequence
     );
     for project in &snapshot.projects {
         println!(
@@ -202,23 +255,31 @@ fn print_snapshot(snapshot: &FullStateSnapshot) {
 fn format_event(event: &nexode_proto::HypervisorEvent) -> String {
     match event.payload.as_ref() {
         Some(hypervisor_event::Payload::AgentStateChanged(payload)) => format!(
-            "{} agent {} -> {}",
+            "#{} {} agent {} slot {} -> {}",
+            event.event_sequence,
             event.event_id,
             payload.agent_id,
+            if payload.slot_id.is_empty() {
+                "-"
+            } else {
+                &payload.slot_id
+            },
             format_agent_state(payload.new_state)
         ),
         Some(hypervisor_event::Payload::AgentTelemetryUpdated(payload)) => format!(
-            "{} telemetry {} +{} tokens",
-            event.event_id, payload.agent_id, payload.incr_tokens
+            "#{} {} telemetry {} +{} tokens",
+            event.event_sequence, event.event_id, payload.agent_id, payload.incr_tokens
         ),
         Some(hypervisor_event::Payload::TaskStatusChanged(payload)) => format!(
-            "{} task {} -> {}",
+            "#{} {} task {} -> {}",
+            event.event_sequence,
             event.event_id,
             payload.task_id,
             format_task_status(payload.new_status)
         ),
         Some(hypervisor_event::Payload::ProjectBudgetAlert(payload)) => format!(
-            "{} budget {} ${:.2}/${:.2} hard_kill={}",
+            "#{} {} budget {} ${:.2}/${:.2} hard_kill={}",
+            event.event_sequence,
             event.event_id,
             payload.project_id,
             payload.current_usd,
@@ -226,7 +287,8 @@ fn format_event(event: &nexode_proto::HypervisorEvent) -> String {
             payload.hard_kill
         ),
         Some(hypervisor_event::Payload::SlotAgentSwapped(payload)) => format!(
-            "{} slot {} swapped {} -> {} ({})",
+            "#{} {} slot {} swapped {} -> {} ({})",
+            event.event_sequence,
             event.event_id,
             payload.slot_id,
             payload.old_agent_id,
@@ -234,14 +296,58 @@ fn format_event(event: &nexode_proto::HypervisorEvent) -> String {
             payload.reason
         ),
         Some(hypervisor_event::Payload::WorktreeStatusChanged(payload)) => format!(
-            "{} worktree {} risk {:.2}",
-            event.event_id, payload.worktree_id, payload.new_risk
+            "#{} {} worktree {} risk {:.2}",
+            event.event_sequence, event.event_id, payload.worktree_id, payload.new_risk
         ),
         Some(hypervisor_event::Payload::UncertaintyFlag(payload)) => format!(
-            "{} uncertainty {} {}",
-            event.event_id, payload.agent_id, payload.reason
+            "#{} {} uncertainty {} {}",
+            event.event_sequence, event.event_id, payload.agent_id, payload.reason
         ),
-        None => format!("{} empty-event", event.event_id),
+        Some(hypervisor_event::Payload::ObserverAlert(payload)) => match payload.detail.as_ref() {
+            Some(observer_alert::Detail::LoopDetected(detail)) => format!(
+                "#{} {} observer loop slot {} agent {} action {} {}",
+                event.event_sequence,
+                event.event_id,
+                payload.slot_id,
+                if payload.agent_id.is_empty() {
+                    "-"
+                } else {
+                    &payload.agent_id
+                },
+                format_observer_intervention(detail.intervention),
+                detail.reason
+            ),
+            Some(observer_alert::Detail::SandboxViolation(detail)) => format!(
+                "#{} {} observer sandbox slot {} agent {} path {} {}",
+                event.event_sequence,
+                event.event_id,
+                payload.slot_id,
+                if payload.agent_id.is_empty() {
+                    "-"
+                } else {
+                    &payload.agent_id
+                },
+                detail.path,
+                detail.reason
+            ),
+            Some(observer_alert::Detail::UncertaintySignal(detail)) => format!(
+                "#{} {} observer uncertainty slot {} agent {} {}",
+                event.event_sequence,
+                event.event_id,
+                payload.slot_id,
+                if payload.agent_id.is_empty() {
+                    "-"
+                } else {
+                    &payload.agent_id
+                },
+                detail.reason
+            ),
+            None => format!(
+                "#{} {} observer empty-alert",
+                event.event_sequence, event.event_id
+            ),
+        },
+        None => format!("#{} {} empty-event", event.event_sequence, event.event_id),
     }
 }
 
@@ -313,6 +419,15 @@ fn format_command_outcome(raw: i32) -> &'static str {
     }
 }
 
+fn format_observer_intervention(raw: i32) -> &'static str {
+    match ObserverIntervention::try_from(raw).unwrap_or(ObserverIntervention::Unspecified) {
+        ObserverIntervention::Alert => "alert",
+        ObserverIntervention::Kill => "kill",
+        ObserverIntervention::Pause => "pause",
+        ObserverIntervention::Unspecified => "unspecified",
+    }
+}
+
 impl TaskStatusArg {
     fn into_proto(self) -> TaskStatus {
         match self {
@@ -348,6 +463,7 @@ fn command_id() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nexode_proto::{HypervisorEvent, LoopDetected, ObserverAlert};
 
     #[test]
     fn formats_successful_command_response() {
@@ -374,5 +490,43 @@ mod tests {
             rendered,
             "✗ Command cmd-99 failed: slot not found (slot_not_found)"
         );
+    }
+
+    #[test]
+    fn builds_resume_slot_command_with_instruction() {
+        let command = build_command(DispatchCommand::ResumeSlot {
+            slot_id: "slot-a".to_string(),
+            instruction: vec!["please".to_string(), "rebase".to_string()],
+        });
+
+        match command.action.expect("action") {
+            operator_command::Action::ResumeSlot(payload) => {
+                assert_eq!(payload.slot_id, "slot-a");
+                assert_eq!(payload.instruction, "please rebase");
+            }
+            other => panic!("expected resume slot action, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formats_observer_alert_events() {
+        let rendered = format_event(&HypervisorEvent {
+            event_id: "event-3".to_string(),
+            timestamp_ms: 0,
+            barrier_id: String::new(),
+            event_sequence: 3,
+            payload: Some(hypervisor_event::Payload::ObserverAlert(ObserverAlert {
+                slot_id: "slot-a".to_string(),
+                agent_id: "agent-1".to_string(),
+                detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
+                    reason: "observed 3 identical output lines".to_string(),
+                    intervention: ObserverIntervention::Pause as i32,
+                })),
+            })),
+        });
+
+        assert!(rendered.contains("#3 event-3 observer loop"));
+        assert!(rendered.contains("slot-a"));
+        assert!(rendered.contains("pause"));
     }
 }

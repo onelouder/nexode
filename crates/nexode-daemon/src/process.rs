@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -159,6 +159,12 @@ impl AgentProcessManager {
             shutdown_tx: Some(shutdown_tx),
             task,
         })
+    }
+}
+
+impl Default for AgentProcessManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -462,7 +468,7 @@ fn parse_csv(line: &str) -> Option<ParsedTelemetry> {
 
 fn write_setup_files(
     slot_id: &str,
-    worktree_path: &PathBuf,
+    worktree_path: &Path,
     setup_files: &[SetupFile],
 ) -> Result<(), AgentProcessError> {
     for setup_file in setup_files {
