@@ -1,77 +1,59 @@
 ---
-agent: gpt
-status: review
-from: gpt
-timestamp: 2026-03-15T08:11:49-07:00
-task: "Sprint 1 — WAL Recovery + Agent Harness"
-branch: "agent/gpt/sprint-1-wal-harness"
+agent: pc
+status: ready
+from: pc
+timestamp: 2026-03-15T09:17:00-07:00
+task: "Sprint 2 — Real Agent Integration + Critical Fixes"
+branch: "agent/gpt/sprint-2-real-agents"
 ---
 
-# Handoff: Sprint 1 Progress
+# Handoff: Sprint 2 Planning
 
-## What Landed
+## What This Sprint Delivers
 
-- `crates/nexode-daemon/src/wal.rs`
-  - Framed append-only WAL at `.nexode/wal.binlog`
-  - Entry CRC validation, ordered replay, checkpoint compaction
-- `crates/nexode-daemon/src/recovery.rs`
-  - Checkpoint serialization/deserialization
-  - WAL replay into persisted runtime state
-  - Config drift warning
-  - Missing worktree cleanup
-  - Option A recovery: kill surviving PID and restart `WORKING` slot
-- `crates/nexode-daemon/src/context.rs`
-  - Task/include/exclude/git diff/README context compiler
-- `crates/nexode-daemon/src/harness.rs`
-  - `AgentHarness` trait
-  - `MockHarness`, `ClaudeCodeHarness`, `CodexCliHarness`
-  - Harness inference and explicit override handling
-  - Async harness cases intentionally eliminated; harness construction/parsing stays synchronous
-- `crates/nexode-daemon/src/session.rs`
-  - Optional `slot.harness`
-  - `session_config_hash()` for WAL session drift detection
-- `crates/nexode-daemon/src/process.rs`
-  - Harness-driven command/env/setup-file execution
-  - Harness telemetry parsing + completion detection
-- `crates/nexode-daemon/src/engine.rs`
-  - Recovery-or-bootstrap startup path
-  - WAL writes for slot state, telemetry, merge outcomes
-  - Periodic checkpoints
-  - Harness/context-based `start_slot()`
-  - Recovery-aware bootstrap that preserves recovered `Review`/`Done` state
+Sprint 2 proves the daemon works with real CLI agents end-to-end. Three pillars:
 
-## Verification
+1. **Bug fixes** — I-009, I-010, I-015 (issues that would cause silent failures with real agents)
+2. **Command acknowledgment** — R-007 (fire-and-forget → result-bearing response)
+3. **Live integration** — smoke tests with real `claude`/`codex` CLI, end-to-end demo
 
-- `cargo test -p nexode-daemon`
-  - 35 tests passing
-- `cargo check --workspace`
-  - passing
+## Key Documents
 
-Key coverage now includes:
+| Document | Location | Purpose |
+|---|---|---|
+| Sprint instructions | `.agents/CODEX-SPRINT-2.md` | Full task breakdown for gpt agent |
+| Command ack architecture | `docs/architecture/command-ack.md` | R-007 design — oneshot pattern, proto changes |
+| Sprint 1 review | `docs/reviews/sprint-1-review.md` | Source of I-009, I-010, I-015 findings |
+| Issues registry | `ISSUES.md` | Full issue details with module/line references |
 
-- WAL framing / CRC / compaction
-- Recovery replay / config drift / PID restart planning
-- Context compiler
-- Harness selection and command shape
-- Mock harness backward compatibility through engine integration
-- Daemon restart preserving recovered `Review` state without relaunching the slot
+## Bug Fix Summary
 
-## Important Notes
+| Issue | File | Line | Fix |
+|---|---|---|---|
+| I-009 | `process.rs` | ~325 | Non-zero exit always means failure. Add `requires_completion_signal()` to trait. |
+| I-010 | `engine.rs` | ~670 | Emit `AgentStateChanged(Executing)` after `SlotAgentSwapped`. |
+| I-015 | `harness.rs` | ~167-204 | Replace string `contains()` with `serde_json` parsing. |
 
-- Real harness command shapes were aligned to local CLI help:
-  - `claude -p --permission-mode bypassPermissions --model ...`
-  - `codex exec --full-auto --json --model ...`
-- The harness layer is intentionally synchronous.
-  - No `async-trait` or async case handling remains in the harness API.
-  - Process lifecycle and streaming stay in `process.rs`; harnesses only build commands and parse lines.
-- Engine tests that previously relied on the old mock-only launcher now specify `harness: "mock"` explicitly so Sprint 1 inference does not invoke real CLIs during test runs.
-- The new recovery bootstrap logic only relaunches:
-  - slots explicitly marked for restart by recovery
-  - slots that are still `Pending` after replay
-  - recovered `Review`, `Done`, `Paused`, `Resolving`, `Archived`, and `MergeQueue` states are preserved
+## R-007 Changes
 
-## Remaining Follow-Ups
+- **Proto:** `CommandResponse` gains `command_id` (echo) and `CommandOutcome` enum
+- **Transport:** Channel becomes `(OperatorCommand, oneshot::Sender<CommandResponse>)` — transport awaits response with 5s timeout
+- **Engine:** Command handler validates slot existence and state transitions, sends result through oneshot
+- **nexode-ctl:** Prints actual command result instead of always "success"
 
-- Branch should be pushed and reviewed from `agent/gpt/sprint-1-wal-harness`.
-- Optional: add opt-in live smoke tests for installed `claude` / `codex`.
-- Optional: add a daemon-level crash-recovery integration test for a slot that is still `WORKING` at crash time using a controllable long-running harness fixture.
+## Dependencies
+
+- `serde_json` crate (for I-015 fix)
+- `claude` CLI (for live tests — gated behind feature flag)
+- `codex` CLI (for live tests — gated behind feature flag)
+
+## What NOT to Change
+
+- No observer loops — Sprint 3
+- No event sequence numbers (R-005) — Sprint 3
+- No engine decomposition — tracked but not blocking
+- No AGENTS.md, DECISIONS.md, docs/spec/*, docs/architecture/* modifications
+
+## Previous Sprint Summary
+
+Sprint 1 delivered WAL recovery and agent harness. 35 tests, all passing. 10 findings from code review — 1 high (R-007, addressed this sprint), 3 medium (I-009, I-010 addressed this sprint; R-005 deferred), 6 low (deferred). See `docs/reviews/sprint-1-review.md`.
