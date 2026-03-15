@@ -1,9 +1,10 @@
 ---
 agent: gpt
-status: review
+status: blocked
 from: pc
-timestamp: 2026-03-14T22:05:18-07:00
+timestamp: 2026-03-14T22:09:51-07:00
 task: "Phase 0 Spike — Build and validate core Nexode daemon"
+blocked_on: github-auth
 ---
 
 # Handoff: pc → gpt (Codex)
@@ -11,14 +12,14 @@ task: "Phase 0 Spike — Build and validate core Nexode daemon"
 ## Claim Status
 
 - `gpt` claimed this handoff on branch `agent/gpt/phase-0-spike`
-- Current focus: branch pushed for review; remaining scope is merge queue, runnable daemon loop, and `nexode-ctl`
+- Current focus: implementation checkpoint is committed locally at `d99b0b0`; push to GitHub is blocked by a write-denied HTTPS token (`git push` returns 403)
 - Workspace scaffold is in place and `cargo check --workspace` is green
 - Session Config Manager is implemented with D-003/D-004 behavior, include resolution, `.nexode.yaml` merging, and legacy v1 wrapping
 - Token Accountant is implemented with SQLite `token_log`, `project_costs`, and project budget alert evaluation
 - Git Worktree Orchestrator is implemented with create/list/remove plus detached verification before fast-forward merge
 - Mock agent process manager is implemented with tokio-based stdout/stderr streaming, telemetry parsing, crash respawn, watchdog timeout handling, and `SlotAgentSwapped` emission
 - gRPC skeleton is implemented with tonic server stubs for `SubscribeEvents`, `DispatchCommand`, and `GetFullState`, backed by in-memory channels/state and verified through a real client/server test harness
-- Branch is ready for human review on GitHub
+- Branch is ready for review once GitHub auth is refreshed and the branch is pushed
 
 ## What was done (pc, Session 1 + Kanban Architecture)
 

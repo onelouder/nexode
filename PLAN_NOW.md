@@ -21,11 +21,13 @@
 - [x] Implement the Git Worktree Orchestrator with worktree lifecycle and merge-plus-verify flow
 - [x] Implement the mock agent process manager with stdout/stderr streaming, crash respawn, and watchdog timeout handling
 - [x] Implement the daemon-side gRPC skeleton with event streaming, command dispatch, and full-state stubs
+- [ ] Refresh GitHub auth and push `agent/gpt/phase-0-spike` for review
 - [ ] Start the merge queue or `nexode-ctl` client pass after review
 
 ## Blocked
 
-- None
+- `git push -u origin agent/gpt/phase-0-spike` returns `403 Permission to onelouder/nexode.git denied to onelouder`
+- `gh auth status` is healthy for API access, but the stored token does not have Git write access; `gh auth refresh --hostname github.com --scopes repo` requires an interactive device login
 
 ## Done This Sprint
 
@@ -42,4 +44,4 @@
 - Worktree tests cover create/list/remove, verification-gated merge success, git conflict detection, and verify-failure refusal to update the target branch.
 - Process-manager tests cover telemetry parsing, crash recovery with `SlotAgentSwapped`, and watchdog-triggered respawn.
 - gRPC tests cover over-the-wire `GetFullState`, `DispatchCommand`, and `SubscribeEvents`.
-- Current branch state is being pushed for review.
+- Current branch state is committed locally at `d99b0b0` and awaiting GitHub auth refresh before push.
