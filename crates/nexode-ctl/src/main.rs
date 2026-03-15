@@ -3,13 +3,17 @@ use nexode_proto::hypervisor_client::HypervisorClient;
 use nexode_proto::hypervisor_event;
 use nexode_proto::operator_command;
 use nexode_proto::{
-    AgentMode, FullStateSnapshot, KillAgent, KillProject, MoveTask, OperatorCommand, PauseAgent,
-    ResumeAgent, SetAgentMode, SlotDispatch, StateRequest, SubscribeRequest, TaskStatus,
+    AgentMode, CommandOutcome, CommandResponse, FullStateSnapshot, KillAgent, KillProject,
+    MoveTask, OperatorCommand, PauseAgent, ResumeAgent, SetAgentMode, SlotDispatch, StateRequest,
+    SubscribeRequest, TaskStatus,
 };
 use tonic::Request;
 
 #[derive(Debug, Parser)]
-#[command(name = "nexode-ctl", about = "Phase 0 gRPC client for the Nexode daemon")]
+#[command(
+    name = "nexode-ctl",
+    about = "Phase 0 gRPC client for the Nexode daemon"
+)]
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:50051")]
     addr: String,
@@ -108,9 +112,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?
                 .into_inner();
             if response.success {
-                println!("ok");
+                println!("{}", format_command_response(&response));
             } else {
-                return Err(response.error_message.into());
+                let message = format_command_response(&response);
+                println!("{message}");
+                return Err(message.into());
             }
         }
     }
@@ -126,12 +132,12 @@ fn build_command(command: DispatchCommand) -> OperatorCommand {
                 raw_nl: raw_nl.join(" "),
             })
         }
-        DispatchCommand::MoveTask { task_id, target } => operator_command::Action::MoveTask(
-            MoveTask {
+        DispatchCommand::MoveTask { task_id, target } => {
+            operator_command::Action::MoveTask(MoveTask {
                 task_id,
                 target: target.into_proto() as i32,
-            },
-        ),
+            })
+        }
         DispatchCommand::KillProject { project_id } => {
             operator_command::Action::KillProject(KillProject { project_id })
         }
@@ -239,6 +245,28 @@ fn format_event(event: &nexode_proto::HypervisorEvent) -> String {
     }
 }
 
+fn format_command_response(response: &CommandResponse) -> String {
+    let command_id = if response.command_id.is_empty() {
+        "<unknown>"
+    } else {
+        &response.command_id
+    };
+
+    if response.success {
+        format!("✓ Command {command_id} executed")
+    } else {
+        format!(
+            "✗ Command {command_id} failed: {} ({})",
+            if response.error_message.is_empty() {
+                "unknown error"
+            } else {
+                &response.error_message
+            },
+            format_command_outcome(response.outcome)
+        )
+    }
+}
+
 fn format_task_status(raw: i32) -> &'static str {
     match TaskStatus::try_from(raw).unwrap_or(TaskStatus::Unspecified) {
         TaskStatus::Pending => "pending",
@@ -275,6 +303,16 @@ fn format_agent_state(raw: i32) -> &'static str {
     }
 }
 
+fn format_command_outcome(raw: i32) -> &'static str {
+    match CommandOutcome::try_from(raw).unwrap_or(CommandOutcome::Unspecified) {
+        CommandOutcome::Executed => "executed",
+        CommandOutcome::Rejected => "rejected",
+        CommandOutcome::SlotNotFound => "slot_not_found",
+        CommandOutcome::InvalidTransition => "invalid_transition",
+        CommandOutcome::Unspecified => "unspecified",
+    }
+}
+
 impl TaskStatusArg {
     fn into_proto(self) -> TaskStatus {
         match self {
@@ -305,4 +343,36 @@ fn command_id() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_successful_command_response() {
+        let rendered = format_command_response(&CommandResponse {
+            success: true,
+            error_message: String::new(),
+            command_id: "cmd-42".to_string(),
+            outcome: CommandOutcome::Executed as i32,
+        });
+
+        assert_eq!(rendered, "✓ Command cmd-42 executed");
+    }
+
+    #[test]
+    fn formats_failed_command_response_with_outcome() {
+        let rendered = format_command_response(&CommandResponse {
+            success: false,
+            error_message: "slot not found".to_string(),
+            command_id: "cmd-99".to_string(),
+            outcome: CommandOutcome::SlotNotFound as i32,
+        });
+
+        assert_eq!(
+            rendered,
+            "✗ Command cmd-99 failed: slot not found (slot_not_found)"
+        );
+    }
 }

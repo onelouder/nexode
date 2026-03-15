@@ -222,4 +222,14 @@ message SlotDispatch {
 message CommandResponse {
   bool success = 1;
   string error_message = 2;
+  string command_id = 3;
+  CommandOutcome outcome = 4;
+}
+
+enum CommandOutcome {
+  COMMAND_OUTCOME_UNSPECIFIED = 0;
+  COMMAND_OUTCOME_EXECUTED = 1;
+  COMMAND_OUTCOME_REJECTED = 2;
+  COMMAND_OUTCOME_SLOT_NOT_FOUND = 3;
+  COMMAND_OUTCOME_INVALID_TRANSITION = 4;
 }

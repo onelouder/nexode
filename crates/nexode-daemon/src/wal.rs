@@ -138,11 +138,8 @@ impl Wal {
 
             let len = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().expect("u32 slice"))
                 as usize;
-            let expected_crc = u32::from_le_bytes(
-                bytes[cursor + 4..cursor + 8]
-                    .try_into()
-                    .expect("u32 slice"),
-            );
+            let expected_crc =
+                u32::from_le_bytes(bytes[cursor + 4..cursor + 8].try_into().expect("u32 slice"));
             cursor += 8;
 
             if bytes.len() - cursor < len {
@@ -182,10 +179,7 @@ impl Wal {
         Ok(WalReadResult { entries, warnings })
     }
 
-    pub fn compact_to_checkpoint(
-        &mut self,
-        checkpoint: &WalEntry,
-    ) -> Result<(), WalError> {
+    pub fn compact_to_checkpoint(&mut self, checkpoint: &WalEntry) -> Result<(), WalError> {
         let payload = bincode::serialize(checkpoint)?;
         let prev_path = self.path.with_extension("binlog.prev");
 

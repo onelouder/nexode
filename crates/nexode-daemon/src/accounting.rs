@@ -404,9 +404,11 @@ fn run_accounting_actor(accountant: TokenAccountant, rx: &mut mpsc::Receiver<Acc
                     accountant.record(&record)?;
                     Ok(UsageUpdate {
                         project_total: accountant.get_project_total(&record.project_id)?,
-                        slot_total: accountant.get_slot_total(&record.project_id, &record.slot_id)?,
+                        slot_total: accountant
+                            .get_slot_total(&record.project_id, &record.slot_id)?,
                         session_total: accountant.get_session_total()?,
-                        budget_alert: accountant.project_budget_alert(&record.project_id, &budget)?,
+                        budget_alert: accountant
+                            .project_budget_alert(&record.project_id, &budget)?,
                     })
                 })();
                 let _ = response.send(result);

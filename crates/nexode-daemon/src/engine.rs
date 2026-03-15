@@ -8,9 +8,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use nexode_proto::hypervisor_event;
 use nexode_proto::operator_command;
 use nexode_proto::{
-    AgentMode, AgentSlot, AgentState, AgentStateChanged, AgentTelemetryUpdated, FullStateSnapshot,
-    HypervisorEvent, OperatorCommand, Project, ProjectBudgetAlert, SlotAgentSwapped, TaskNode, TaskStatus,
-    TaskStatusChanged, WorktreeStatusChanged,
+    AgentMode, AgentSlot, AgentState, AgentStateChanged, AgentTelemetryUpdated, CommandOutcome,
+    CommandResponse, FullStateSnapshot, HypervisorEvent, OperatorCommand, Project,
+    ProjectBudgetAlert, SlotAgentSwapped, TaskNode, TaskStatus, TaskStatusChanged,
+    WorktreeStatusChanged,
 };
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -19,26 +20,26 @@ use tokio::time::{self, MissedTickBehavior};
 use uuid::Uuid;
 
 use crate::accounting::{
-    TokenAccountingHandle, TokenAccountingServiceError, TokenAccountantError, TokenUsageRecord,
+    TokenAccountantError, TokenAccountingHandle, TokenAccountingServiceError, TokenUsageRecord,
     UsageUpdate,
 };
 use crate::context::{ContextError, compile_context};
 use crate::git::{GitWorktreeError, GitWorktreeOrchestrator};
 use crate::harness::{HarnessConfig, HarnessError, resolve_harness};
 use crate::process::{
-    AgentProcessError, AgentProcessEvent, AgentProcessManager, AgentProcessSpec,
-    OutputStream, ParsedTelemetry, SlotSupervisor,
+    AgentProcessError, AgentProcessEvent, AgentProcessManager, AgentProcessSpec, OutputStream,
+    ParsedTelemetry, SlotSupervisor,
 };
 use crate::recovery::{
-    PersistedProjectState, PersistedRuntimeState, PersistedSlotState, RecoveryError,
-    RestartSlot, recover_from_wal, serialize_checkpoint,
+    PersistedProjectState, PersistedRuntimeState, PersistedSlotState, RecoveryError, RestartSlot,
+    recover_from_wal, serialize_checkpoint,
 };
 use crate::session::{
     BudgetConfig, ContextConfig, EffectiveDefaults, ProjectConfig, SessionConfig,
     SessionConfigError, SlotConfig, VerifyConfig, load_session_config, session_config_hash,
 };
 use crate::transport::{CommandReceiver, GrpcBridge, HypervisorService};
-use crate::wal::{MergeOutcomeTag, Wal, WalError, WalEntry, resolve_wal_path};
+use crate::wal::{MergeOutcomeTag, Wal, WalEntry, WalError, resolve_wal_path};
 
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:50051";
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(2);
@@ -314,8 +315,17 @@ impl DaemonEngine {
                 _ = shutdown_rx.changed() => {
                     break;
                 }
-                Some(command) = self.command_rx.recv() => {
-                    self.handle_command(command).await?;
+                Some((command, response_tx)) = self.command_rx.recv() => {
+                    let command_id = command.command_id.clone();
+                    let response = match self.handle_command(command).await {
+                        Ok(response) => response,
+                        Err(error) => self.command_response(
+                            &command_id,
+                            CommandOutcome::Rejected,
+                            Some(error.to_string()),
+                        ),
+                    };
+                    let _ = response_tx.send(response);
                 }
                 Some(event) = self.process_rx.recv() => {
                     self.handle_process_event(event).await?;
@@ -339,50 +349,149 @@ impl DaemonEngine {
         Ok(())
     }
 
-    async fn handle_command(&mut self, command: OperatorCommand) -> Result<(), DaemonError> {
+    async fn handle_command(
+        &mut self,
+        command: OperatorCommand,
+    ) -> Result<CommandResponse, DaemonError> {
+        let command_id = command.command_id.clone();
         let Some(action) = command.action else {
-            return Ok(());
+            return Ok(self.command_response(
+                &command_id,
+                CommandOutcome::Rejected,
+                Some("command had no action".to_string()),
+            ));
         };
 
-        match action {
+        let response = match action {
             operator_command::Action::MoveTask(move_task) => {
-                if let Ok(target) = TaskStatus::try_from(move_task.target) {
-                    self.move_task(&move_task.task_id, target).await?;
+                let Some(current_status) = self.current_task_status(&move_task.task_id) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("slot `{}` not found", move_task.task_id)),
+                    ));
+                };
+                let Ok(target) = TaskStatus::try_from(move_task.target) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::Rejected,
+                        Some(format!("unknown task status `{}`", move_task.target)),
+                    ));
+                };
+                if !is_valid_task_transition(current_status, target) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::InvalidTransition,
+                        Some(format!(
+                            "invalid task transition {} -> {}",
+                            format_task_status(current_status),
+                            format_task_status(target),
+                        )),
+                    ));
                 }
+                self.move_task(&move_task.task_id, target).await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::KillProject(kill_project) => {
+                if !self.state.projects.contains_key(&kill_project.project_id) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::Rejected,
+                        Some(format!("project `{}` not found", kill_project.project_id)),
+                    ));
+                }
                 self.kill_project(&kill_project.project_id, TaskStatus::Archived)
                     .await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::SlotDispatch(dispatch) => {
-                self.dispatch_slot(&dispatch.slot_id, &dispatch.raw_nl).await?;
+                if !self.state.slot_project.contains_key(&dispatch.slot_id) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("slot `{}` not found", dispatch.slot_id)),
+                    ));
+                }
+                self.dispatch_slot(&dispatch.slot_id, &dispatch.raw_nl)
+                    .await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::PauseAgent(pause) => {
-                if let Some(slot_id) = self.find_slot_by_agent(&pause.agent_id) {
-                    self.pause_slot(&slot_id).await?;
+                let Some(slot_id) = self.find_slot_by_agent(&pause.agent_id) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("agent `{}` not found", pause.agent_id)),
+                    ));
+                };
+                if self.current_task_status(&slot_id) != Some(TaskStatus::Working) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::InvalidTransition,
+                        Some(format!("slot `{slot_id}` is not working")),
+                    ));
                 }
+                self.pause_slot(&slot_id).await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::ResumeAgent(resume) => {
-                if let Some(slot_id) = self.find_slot_by_agent(&resume.agent_id) {
-                    self.start_slot(&slot_id).await?;
+                let Some(slot_id) = self.find_slot_by_agent(&resume.agent_id) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("agent `{}` not found", resume.agent_id)),
+                    ));
+                };
+                if self.current_task_status(&slot_id) != Some(TaskStatus::Paused) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::InvalidTransition,
+                        Some(format!("slot `{slot_id}` is not paused")),
+                    ));
                 }
+                self.start_slot(&slot_id).await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::KillAgent(kill) => {
-                if let Some(slot_id) = self.find_slot_by_agent(&kill.agent_id) {
-                    self.kill_slot(&slot_id, TaskStatus::Archived).await?;
-                }
+                let Some(slot_id) = self.find_slot_by_agent(&kill.agent_id) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("agent `{}` not found", kill.agent_id)),
+                    ));
+                };
+                self.kill_slot(&slot_id, TaskStatus::Archived).await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::SetAgentMode(set_mode) => {
+                if self.find_slot_by_agent(&set_mode.agent_id).is_none() {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("agent `{}` not found", set_mode.agent_id)),
+                    ));
+                }
                 self.set_agent_mode(&set_mode.agent_id, set_mode.new_mode);
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::AssignTask(assign) => {
+                if !self.state.slot_project.contains_key(&assign.task_id) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::SlotNotFound,
+                        Some(format!("slot `{}` not found", assign.task_id)),
+                    ));
+                }
                 self.dispatch_slot(&assign.task_id, "").await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
             }
-            operator_command::Action::ChatDispatch(_) => {}
-        }
+            operator_command::Action::ChatDispatch(_) => {
+                self.command_response(&command_id, CommandOutcome::Executed, None)
+            }
+        };
 
         self.sync_snapshot().await;
-        Ok(())
+        Ok(response)
     }
 
     async fn move_task(&mut self, task_id: &str, target: TaskStatus) -> Result<(), DaemonError> {
@@ -418,7 +527,9 @@ impl DaemonEngine {
     }
 
     async fn pause_slot(&mut self, slot_id: &str) -> Result<(), DaemonError> {
-        let supervisor = self.slot_mut(slot_id).and_then(|slot| slot.supervisor.take());
+        let supervisor = self
+            .slot_mut(slot_id)
+            .and_then(|slot| slot.supervisor.take());
         if let Some(supervisor) = supervisor {
             let _ = supervisor.shutdown().await;
         }
@@ -429,7 +540,9 @@ impl DaemonEngine {
     }
 
     async fn kill_slot(&mut self, slot_id: &str, status: TaskStatus) -> Result<(), DaemonError> {
-        let supervisor = self.slot_mut(slot_id).and_then(|slot| slot.supervisor.take());
+        let supervisor = self
+            .slot_mut(slot_id)
+            .and_then(|slot| slot.supervisor.take());
         if let Some(supervisor) = supervisor {
             let _ = supervisor.shutdown().await;
         }
@@ -439,7 +552,11 @@ impl DaemonEngine {
         self.set_task_status(slot_id, status, None, None)
     }
 
-    async fn kill_project(&mut self, project_id: &str, status: TaskStatus) -> Result<(), DaemonError> {
+    async fn kill_project(
+        &mut self,
+        project_id: &str,
+        status: TaskStatus,
+    ) -> Result<(), DaemonError> {
         let mut supervisors = Vec::new();
         for slot_id in self.state.project_slot_ids(project_id) {
             if let Some(slot) = self.slot_mut(&slot_id) {
@@ -539,10 +656,18 @@ impl DaemonEngine {
             timeout_minutes: slot_details.timeout_minutes,
             max_context_tokens: None,
         };
-        let context =
-            compile_context(&worktree_path, &slot_config, &project_config, &harness_config)?;
-        let command =
-            harness.build_command(&worktree_path, &slot_details.task, &context, &harness_config)?;
+        let context = compile_context(
+            &worktree_path,
+            &slot_config,
+            &project_config,
+            &harness_config,
+        )?;
+        let command = harness.build_command(
+            &worktree_path,
+            &slot_details.task,
+            &context,
+            &harness_config,
+        )?;
         let spec = AgentProcessSpec {
             slot_id: slot_id.to_string(),
             agent_id_prefix: Some(self.daemon_instance_id.clone()),
@@ -577,14 +702,15 @@ impl DaemonEngine {
                 if let Some(slot) = self.slot_mut(&slot_id) {
                     slot.current_agent_id = Some(agent_id.clone());
                     slot.current_agent_pid = pid;
-                    recovery_swap = slot.pending_swap_from.take().map(|old_agent_id| {
-                        SlotAgentSwapped {
-                            slot_id: slot_id.clone(),
-                            old_agent_id,
-                            new_agent_id: agent_id.clone(),
-                            reason: "crash_recovery".to_string(),
-                        }
-                    });
+                    recovery_swap =
+                        slot.pending_swap_from
+                            .take()
+                            .map(|old_agent_id| SlotAgentSwapped {
+                                slot_id: slot_id.clone(),
+                                old_agent_id,
+                                new_agent_id: agent_id.clone(),
+                                reason: "crash_recovery".to_string(),
+                            });
                 }
                 self.append_current_slot_state(&slot_id)?;
                 if let Some(swapped) = recovery_swap {
@@ -606,7 +732,8 @@ impl DaemonEngine {
                 telemetry,
             } => {
                 if let Some(telemetry) = telemetry {
-                    self.apply_telemetry(&slot_id, &agent_id, &telemetry).await?;
+                    self.apply_telemetry(&slot_id, &agent_id, &telemetry)
+                        .await?;
                 }
                 if matches!(stream, OutputStream::Stderr) && line.contains("spawn error:") {
                     self.publish_event(
@@ -677,6 +804,13 @@ impl DaemonEngine {
                     hypervisor_event::Payload::SlotAgentSwapped(swapped.clone()),
                     None,
                 );
+                self.publish_event(
+                    hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
+                        agent_id: swapped.new_agent_id,
+                        new_state: AgentState::Executing as i32,
+                    }),
+                    None,
+                );
             }
         }
 
@@ -690,7 +824,10 @@ impl DaemonEngine {
         agent_id: &str,
         telemetry: &ParsedTelemetry,
     ) -> Result<(), DaemonError> {
-        if telemetry.tokens_in.is_none() && telemetry.tokens_out.is_none() && telemetry.cost_usd.is_none() {
+        if telemetry.tokens_in.is_none()
+            && telemetry.tokens_out.is_none()
+            && telemetry.cost_usd.is_none()
+        {
             return Ok(());
         }
 
@@ -743,7 +880,8 @@ impl DaemonEngine {
                 None,
             );
             if alert.hard_kill {
-                self.kill_project(&alert.project_id, TaskStatus::Archived).await?;
+                self.kill_project(&alert.project_id, TaskStatus::Archived)
+                    .await?;
             }
         }
 
@@ -884,7 +1022,10 @@ impl DaemonEngine {
                 })?;
                 self.set_task_status(slot_id, TaskStatus::Resolving, None, None)?;
             }
-            Err(GitWorktreeError::VerificationFailed { .. } | GitWorktreeError::VerificationTimedOut { .. }) => {
+            Err(
+                GitWorktreeError::VerificationFailed { .. }
+                | GitWorktreeError::VerificationTimedOut { .. },
+            ) => {
                 if let Some(slot) = self.slot_mut(slot_id) {
                     slot.supervisor = None;
                     slot.current_agent_pid = None;
@@ -973,6 +1114,20 @@ impl DaemonEngine {
         });
     }
 
+    fn command_response(
+        &self,
+        command_id: &str,
+        outcome: CommandOutcome,
+        error_message: Option<String>,
+    ) -> CommandResponse {
+        CommandResponse {
+            success: matches!(outcome, CommandOutcome::Executed),
+            error_message: error_message.unwrap_or_default(),
+            command_id: command_id.to_string(),
+            outcome: outcome as i32,
+        }
+    }
+
     async fn sync_snapshot(&self) {
         self.service.set_full_state(self.state.snapshot()).await;
     }
@@ -980,7 +1135,10 @@ impl DaemonEngine {
     async fn shutdown_all_slots(&mut self) {
         let slot_ids = self.state.slot_ids();
         for slot_id in slot_ids {
-            if let Some(supervisor) = self.slot_mut(&slot_id).and_then(|slot| slot.supervisor.take()) {
+            if let Some(supervisor) = self
+                .slot_mut(&slot_id)
+                .and_then(|slot| slot.supervisor.take())
+            {
                 let _ = supervisor.shutdown().await;
             }
         }
@@ -1080,7 +1238,11 @@ impl DaemonEngine {
 
     fn slot_mut(&mut self, slot_id: &str) -> Option<&mut SlotRuntime> {
         let project_id = self.state.slot_project.get(slot_id)?.clone();
-        self.state.projects.get_mut(&project_id)?.slots.get_mut(slot_id)
+        self.state
+            .projects
+            .get_mut(&project_id)?
+            .slots
+            .get_mut(slot_id)
     }
 
     fn find_slot_by_agent(&self, agent_id: &str) -> Option<String> {
@@ -1089,6 +1251,16 @@ impl DaemonEngine {
                 (slot.current_agent_id.as_deref() == Some(agent_id)).then(|| slot_id.clone())
             })
         })
+    }
+
+    fn current_task_status(&self, slot_id: &str) -> Option<TaskStatus> {
+        let project_id = self.state.slot_project.get(slot_id)?;
+        self.state
+            .projects
+            .get(project_id)?
+            .slots
+            .get(slot_id)
+            .map(|slot| slot.task_status)
     }
 }
 
@@ -1131,10 +1303,7 @@ impl RuntimeState {
                         slot_id: slot.id.clone(),
                     });
                 }
-                slots.insert(
-                    slot.id.clone(),
-                    SlotRuntime::from_slot(slot.clone()),
-                );
+                slots.insert(slot.id.clone(), SlotRuntime::from_slot(slot.clone()));
             }
 
             projects.insert(
@@ -1183,7 +1352,10 @@ impl RuntimeState {
                 if let Some(task) = persisted_slot.task.clone() {
                     slot.task = task;
                 }
-                if let Some(mode) = persisted_slot.mode.and_then(|raw| AgentMode::try_from(raw).ok()) {
+                if let Some(mode) = persisted_slot
+                    .mode
+                    .and_then(|raw| AgentMode::try_from(raw).ok())
+                {
                     slot.mode = mode;
                 }
                 if let Some(status) = persisted_slot
@@ -1323,7 +1495,11 @@ impl ProjectRuntime {
             budget_max_usd: self.budget.max_usd.unwrap_or_default(),
             budget_warn_usd: self.budget.warn_usd.unwrap_or_default(),
             current_cost_usd: self.current_cost_usd,
-            slots: self.slots.values().map(|slot| slot.snapshot(&self.id)).collect(),
+            slots: self
+                .slots
+                .values()
+                .map(|slot| slot.snapshot(&self.id))
+                .collect(),
         }
     }
 
@@ -1462,7 +1638,38 @@ fn now_ms() -> u64 {
 }
 
 fn next_barrier_id() -> String {
-    format!("barrier-{}", BARRIER_COUNTER.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "barrier-{}",
+        BARRIER_COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn is_valid_task_transition(current: TaskStatus, target: TaskStatus) -> bool {
+    use TaskStatus::*;
+
+    match (current, target) {
+        (Pending, Working | Archived) => true,
+        (Working, Review | Paused | Archived) => true,
+        (Review, MergeQueue | Working | Paused) => true,
+        (MergeQueue, Done | Resolving | Paused) => true,
+        (Resolving, Done | Archived) => true,
+        (Paused, Working | MergeQueue) => true,
+        _ => false,
+    }
+}
+
+fn format_task_status(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Working => "working",
+        TaskStatus::Review => "review",
+        TaskStatus::MergeQueue => "merge_queue",
+        TaskStatus::Resolving => "resolving",
+        TaskStatus::Done => "done",
+        TaskStatus::Paused => "paused",
+        TaskStatus::Archived => "archived",
+        TaskStatus::Unspecified => "unspecified",
+    }
 }
 
 #[cfg(test)]
@@ -1472,9 +1679,12 @@ mod tests {
     use std::time::Duration;
 
     use nexode_proto::hypervisor_client::HypervisorClient;
+    use nexode_proto::hypervisor_server::Hypervisor;
+    use nexode_proto::{MoveTask, SlotDispatch};
     use tempfile::TempDir;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
+    use tokio_stream::StreamExt;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn full_auto_slots_merge_through_fifo_queue() {
@@ -1508,7 +1718,9 @@ projects:
 "#,
         );
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
         let addr = listener.local_addr().expect("listener addr");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let config = fixture.config(session_path);
@@ -1522,13 +1734,18 @@ projects:
         let mut client = fixture.client(addr).await;
         let snapshot = wait_for_all_tasks_done(&mut client).await;
         shutdown_tx.send(()).expect("signal shutdown");
-        server.await.expect("join daemon task").expect("daemon exits cleanly");
+        server
+            .await
+            .expect("join daemon task")
+            .expect("daemon exits cleanly");
 
         assert_eq!(snapshot.task_dag.len(), 3);
-        assert!(snapshot
-            .task_dag
-            .iter()
-            .all(|task| task.status == TaskStatus::Done as i32));
+        assert!(
+            snapshot
+                .task_dag
+                .iter()
+                .all(|task| task.status == TaskStatus::Done as i32)
+        );
         assert!(fixture.repo.join(".nexode-mock/slot-a.txt").exists());
         assert!(fixture.repo.join(".nexode-mock/slot-b.txt").exists());
         assert!(fixture.repo.join(".nexode-mock/slot-c.txt").exists());
@@ -1560,7 +1777,9 @@ projects:
 "#,
         );
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
         let addr = listener.local_addr().expect("listener addr");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let config = fixture.config(session_path);
@@ -1574,7 +1793,10 @@ projects:
         let mut client = fixture.client(addr).await;
         let snapshot = wait_for_status(&mut client, "slot-a", TaskStatus::Archived).await;
         shutdown_tx.send(()).expect("signal shutdown");
-        server.await.expect("join daemon task").expect("daemon exits cleanly");
+        server
+            .await
+            .expect("join daemon task")
+            .expect("daemon exits cleanly");
 
         assert_eq!(snapshot.task_dag[0].status, TaskStatus::Archived as i32);
     }
@@ -1602,7 +1824,9 @@ projects:
 "#,
         );
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
         let addr = listener.local_addr().expect("listener addr");
         let config = fixture.config(session_path.clone());
         let server = tokio::spawn(async move {
@@ -1617,7 +1841,9 @@ projects:
         server.abort();
         let _ = server.await;
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
         let addr = listener.local_addr().expect("listener addr");
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let config = fixture.config(session_path);
@@ -1631,10 +1857,202 @@ projects:
         let mut client = fixture.client(addr).await;
         let recovered = wait_for_status(&mut client, "slot-a", TaskStatus::Review).await;
         shutdown_tx.send(()).expect("signal shutdown");
-        server.await.expect("join daemon task").expect("daemon exits cleanly");
+        server
+            .await
+            .expect("join daemon task")
+            .expect("daemon exits cleanly");
 
         assert_eq!(recovered.task_dag[0].assigned_agent_id, initial_agent_id);
         assert!((recovered.total_session_cost - initial_cost).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dispatch_command_returns_validated_outcomes() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "command-ack"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let config = fixture.config(session_path);
+        let server = tokio::spawn(async move {
+            run_daemon_with_listener(config, listener, async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+        });
+
+        let mut client = fixture.client(addr).await;
+        let snapshot = wait_for_status(&mut client, "slot-a", TaskStatus::Review).await;
+        assert_eq!(snapshot.task_dag[0].status, TaskStatus::Review as i32);
+
+        let invalid = client
+            .dispatch_command(tonic::Request::new(OperatorCommand {
+                command_id: "cmd-invalid".to_string(),
+                action: Some(operator_command::Action::MoveTask(MoveTask {
+                    task_id: "slot-a".to_string(),
+                    target: TaskStatus::Done as i32,
+                })),
+            }))
+            .await
+            .expect("dispatch invalid transition")
+            .into_inner();
+        assert!(!invalid.success);
+        assert_eq!(invalid.command_id, "cmd-invalid");
+        assert_eq!(invalid.outcome, CommandOutcome::InvalidTransition as i32);
+
+        let missing = client
+            .dispatch_command(tonic::Request::new(OperatorCommand {
+                command_id: "cmd-missing".to_string(),
+                action: Some(operator_command::Action::SlotDispatch(SlotDispatch {
+                    slot_id: "slot-xyz".to_string(),
+                    raw_nl: "do the thing".to_string(),
+                })),
+            }))
+            .await
+            .expect("dispatch missing slot")
+            .into_inner();
+        assert!(!missing.success);
+        assert_eq!(missing.command_id, "cmd-missing");
+        assert_eq!(missing.outcome, CommandOutcome::SlotNotFound as i32);
+
+        let executed = client
+            .dispatch_command(tonic::Request::new(OperatorCommand {
+                command_id: "cmd-executed".to_string(),
+                action: Some(operator_command::Action::MoveTask(MoveTask {
+                    task_id: "slot-a".to_string(),
+                    target: TaskStatus::MergeQueue as i32,
+                })),
+            }))
+            .await
+            .expect("dispatch valid move")
+            .into_inner();
+        assert!(executed.success);
+        assert_eq!(executed.command_id, "cmd-executed");
+        assert_eq!(executed.outcome, CommandOutcome::Executed as i32);
+
+        let done = wait_for_status(&mut client, "slot-a", TaskStatus::Done).await;
+        shutdown_tx.send(()).expect("signal shutdown");
+        server
+            .await
+            .expect("join daemon task")
+            .expect("daemon exits cleanly");
+
+        assert_eq!(done.task_dag[0].status, TaskStatus::Done as i32);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn slot_agent_swapped_emits_executing_event() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "swap-events"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+        );
+
+        let session = load_session_config(&session_path).expect("load session");
+        let state = RuntimeState::from_session(session, Duration::from_secs(5))
+            .expect("create runtime state");
+        let bridge = GrpcBridge::new(state.snapshot());
+        let (service, command_rx) = bridge.into_parts();
+        let accounting = TokenAccountingHandle::start(fixture.root.join("command-ack.sqlite3"))
+            .expect("accounting");
+        let wal = Wal::open(fixture.root.join(".nexode/wal.binlog")).expect("open wal");
+        let (process_tx, process_rx) = mpsc::unbounded_channel();
+
+        let mut engine = DaemonEngine {
+            config: fixture.config(session_path),
+            service: service.clone(),
+            command_rx,
+            process_rx,
+            process_tx,
+            process_manager: AgentProcessManager::new(),
+            accounting,
+            wal,
+            daemon_instance_id: "test-daemon".to_string(),
+            state,
+        };
+        if let Some(slot) = engine.slot_mut("slot-a") {
+            slot.task_status = TaskStatus::Working;
+            slot.current_agent_id = Some("old-agent".to_string());
+        }
+
+        let mut stream = Hypervisor::subscribe_events(
+            &service,
+            tonic::Request::new(nexode_proto::SubscribeRequest {
+                client_version: "test-client".to_string(),
+            }),
+        )
+        .await
+        .expect("subscribe events")
+        .into_inner();
+
+        engine
+            .handle_process_event(AgentProcessEvent::SlotAgentSwapped(SlotAgentSwapped {
+                slot_id: "slot-a".to_string(),
+                old_agent_id: "old-agent".to_string(),
+                new_agent_id: "new-agent".to_string(),
+                reason: "crash_recovery".to_string(),
+            }))
+            .await
+            .expect("handle swap event");
+
+        let mut saw_swap = false;
+        let mut saw_executing = false;
+        for _ in 0..2 {
+            let event = timeout(Duration::from_secs(2), stream.next())
+                .await
+                .expect("event before timeout")
+                .expect("event payload")
+                .expect("stream response");
+            match event.payload {
+                Some(hypervisor_event::Payload::SlotAgentSwapped(payload)) => {
+                    saw_swap = payload.slot_id == "slot-a" && payload.new_agent_id == "new-agent";
+                }
+                Some(hypervisor_event::Payload::AgentStateChanged(payload)) => {
+                    saw_executing = payload.agent_id == "new-agent"
+                        && payload.new_state == AgentState::Executing as i32;
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_swap);
+        assert!(saw_executing);
     }
 
     async fn wait_for_all_tasks_done(
@@ -1702,7 +2120,10 @@ projects:
             let root = tempdir.path().to_path_buf();
             let repo = root.join("repo");
             fs::create_dir_all(&repo).expect("create repo directory");
-            run_git(&root, ["init", "-b", DEFAULT_TARGET_BRANCH, repo.to_str().unwrap()]);
+            run_git(
+                &root,
+                ["init", "-b", DEFAULT_TARGET_BRANCH, repo.to_str().unwrap()],
+            );
             run_git(&repo, ["config", "user.email", "test@example.com"]);
             run_git(&repo, ["config", "user.name", "Test User"]);
             fs::write(repo.join("README.md"), "base\n").expect("write base file");

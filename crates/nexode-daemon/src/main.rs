@@ -3,9 +3,7 @@ use nexode_daemon::engine::{DaemonConfig, run_daemon};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let session_path = args
-        .next()
-        .unwrap_or_else(|| "session.yaml".to_string());
+    let session_path = args.next().unwrap_or_else(|| "session.yaml".to_string());
     let mut config = DaemonConfig::new(session_path);
 
     while let Some(flag) = args.next() {
@@ -27,8 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--verify-timeout-ms" => {
                 if let Some(value) = args.next() {
-                    config.verification_timeout =
-                        std::time::Duration::from_millis(value.parse()?);
+                    config.verification_timeout = std::time::Duration::from_millis(value.parse()?);
                 }
             }
             other => {

@@ -1,19 +1,26 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use nexode_proto::hypervisor_server::{Hypervisor, HypervisorServer};
 use nexode_proto::{
-    CommandResponse, FullStateSnapshot, HypervisorEvent, OperatorCommand, StateRequest,
-    SubscribeRequest,
+    CommandOutcome, CommandResponse, FullStateSnapshot, HypervisorEvent, OperatorCommand,
+    StateRequest, SubscribeRequest,
 };
 use tokio::net::TcpListener;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::{BroadcastStream, TcpListenerStream};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-pub type CommandReceiver = mpsc::UnboundedReceiver<OperatorCommand>;
+#[cfg(test)]
+const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_millis(50);
+#[cfg(not(test))]
+const COMMAND_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub type CommandEnvelope = (OperatorCommand, oneshot::Sender<CommandResponse>);
+pub type CommandReceiver = mpsc::UnboundedReceiver<CommandEnvelope>;
 
 #[derive(Debug)]
 pub struct GrpcBridge {
@@ -29,7 +36,7 @@ pub struct HypervisorService {
 #[derive(Debug)]
 struct Inner {
     event_tx: broadcast::Sender<HypervisorEvent>,
-    command_tx: mpsc::UnboundedSender<OperatorCommand>,
+    command_tx: mpsc::UnboundedSender<CommandEnvelope>,
     state: RwLock<FullStateSnapshot>,
 }
 
@@ -113,15 +120,32 @@ impl Hypervisor for HypervisorService {
         &self,
         request: Request<OperatorCommand>,
     ) -> Result<Response<CommandResponse>, Status> {
-        self.inner
-            .command_tx
-            .send(request.into_inner())
-            .map_err(|_| Status::unavailable("command channel closed"))?;
+        let command = request.into_inner();
+        let command_id = command.command_id.clone();
+        let (response_tx, response_rx) = oneshot::channel();
+        if self.inner.command_tx.send((command, response_tx)).is_err() {
+            return Ok(Response::new(command_error_response(
+                &command_id,
+                "Engine command channel is closed",
+                CommandOutcome::Unspecified,
+            )));
+        }
 
-        Ok(Response::new(CommandResponse {
-            success: true,
-            error_message: String::new(),
-        }))
+        let response = match tokio::time::timeout(COMMAND_RESPONSE_TIMEOUT, response_rx).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => command_error_response(
+                &command_id,
+                "Engine dropped command response channel",
+                CommandOutcome::Unspecified,
+            ),
+            Err(_) => command_error_response(
+                &command_id,
+                "Engine did not respond within timeout",
+                CommandOutcome::Unspecified,
+            ),
+        };
+
+        Ok(Response::new(response))
     }
 
     async fn get_full_state(
@@ -129,6 +153,19 @@ impl Hypervisor for HypervisorService {
         _request: Request<StateRequest>,
     ) -> Result<Response<FullStateSnapshot>, Status> {
         Ok(Response::new(self.full_state().await))
+    }
+}
+
+fn command_error_response(
+    command_id: &str,
+    error_message: impl Into<String>,
+    outcome: CommandOutcome,
+) -> CommandResponse {
+    CommandResponse {
+        success: false,
+        error_message: error_message.into(),
+        command_id: command_id.to_string(),
+        outcome: outcome as i32,
     }
 }
 
@@ -187,19 +224,56 @@ mod tests {
             command_id: "cmd-1".to_string(),
             action: None,
         };
+        let expected_command_id = command.command_id.clone();
 
-        let response = client
-            .dispatch_command(Request::new(command.clone()))
-            .await
-            .expect("dispatch command")
-            .into_inner();
-        assert!(response.success);
+        let command_task = tokio::spawn(async move {
+            client
+                .dispatch_command(Request::new(command.clone()))
+                .await
+                .expect("dispatch command")
+                .into_inner()
+        });
 
-        let received = timeout(Duration::from_secs(2), harness.recv_command())
+        let (received, response_tx) = timeout(Duration::from_secs(2), harness.recv_command())
             .await
             .expect("receive command before timeout")
             .expect("command");
-        assert_eq!(received.command_id, command.command_id);
+        response_tx
+            .send(CommandResponse {
+                success: true,
+                error_message: String::new(),
+                command_id: received.command_id.clone(),
+                outcome: CommandOutcome::Executed as i32,
+            })
+            .expect("send response");
+
+        let response = command_task.await.expect("join dispatch task");
+        assert!(response.success);
+        assert_eq!(response.command_id, "cmd-1");
+        assert_eq!(response.outcome, CommandOutcome::Executed as i32);
+        assert_eq!(received.command_id, expected_command_id);
+
+        harness.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dispatch_command_times_out_when_engine_does_not_respond() {
+        let harness = GrpcHarness::new(FullStateSnapshot::default()).await;
+        let mut client = harness.client().await;
+
+        let response = client
+            .dispatch_command(Request::new(OperatorCommand {
+                command_id: "cmd-timeout".to_string(),
+                action: None,
+            }))
+            .await
+            .expect("dispatch command")
+            .into_inner();
+
+        assert!(!response.success);
+        assert_eq!(response.command_id, "cmd-timeout");
+        assert_eq!(response.outcome, CommandOutcome::Unspecified as i32);
+        assert!(response.error_message.contains("did not respond"));
 
         harness.shutdown().await;
     }
@@ -288,7 +362,7 @@ mod tests {
                 .expect("connect client")
         }
 
-        async fn recv_command(&self) -> Option<OperatorCommand> {
+        async fn recv_command(&self) -> Option<CommandEnvelope> {
             self.command_rx.lock().await.recv().await
         }
 

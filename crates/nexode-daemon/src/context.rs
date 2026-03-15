@@ -82,10 +82,11 @@ fn resolve_include_files(
     for pattern in patterns {
         let absolute_pattern = worktree_path.join(pattern);
         let pattern_text = absolute_pattern.to_string_lossy().into_owned();
-        let matches = glob_with(&pattern_text, options).map_err(|source| ContextError::GlobPattern {
-            pattern: pattern.clone(),
-            source,
-        })?;
+        let matches =
+            glob_with(&pattern_text, options).map_err(|source| ContextError::GlobPattern {
+                pattern: pattern.clone(),
+                source,
+            })?;
 
         for entry in matches {
             let path = entry.map_err(|source| ContextError::GlobPath {
@@ -124,10 +125,8 @@ fn read_readme(worktree_path: &Path) -> Result<Option<String>, ContextError> {
         return Ok(None);
     }
 
-    let contents = std::fs::read_to_string(&path).map_err(|source| ContextError::Io {
-        path,
-        source,
-    })?;
+    let contents =
+        std::fs::read_to_string(&path).map_err(|source| ContextError::Io { path, source })?;
     Ok(Some(contents))
 }
 
@@ -159,7 +158,9 @@ mod tests {
 
     use nexode_proto::AgentMode;
 
-    use crate::session::{BudgetConfig, ContextConfig, EffectiveDefaults, ProjectConfig, SlotConfig};
+    use crate::session::{
+        BudgetConfig, ContextConfig, EffectiveDefaults, ProjectConfig, SlotConfig,
+    };
 
     #[test]
     fn compiles_task_globs_diff_and_readme() {
@@ -212,8 +213,8 @@ mod tests {
             max_context_tokens: None,
         };
 
-        let context = compile_context(&repo, &slot, &project, &harness_config)
-            .expect("compile context");
+        let context =
+            compile_context(&repo, &slot, &project, &harness_config).expect("compile context");
 
         assert_eq!(context.task_description, "Implement feature");
         assert_eq!(context.exclude_patterns, vec!["target/**".to_string()]);
