@@ -5,25 +5,52 @@
 
 ## Current Sprint
 
-- **Goal:** Pre-Sprint 3 — Codex CLI Live Verification
-- **Deadline:** 2026-03-15
-- **Active Agent:** gpt
-- **Previous sprint:** Sprint 2 — Real Agent Integration + Critical Fixes (complete, merged to main)
+- **Goal:** Sprint 3 — Observer Loops + Safety
+- **Deadline:** 2026-03-29
+- **Active Agent:** gpt (next turn)
+- **Previous sprint:** Codex CLI Verification (complete, merged to main)
 
 ## Tasks
 
-### Verification Gate
+### Part 1: Loop Detection (do first)
 
-- [x] Read `.agents/prompts/codex-verify.md` and required context files.
-- [x] Confirm baseline tests pass: `cargo test -p nexode-daemon`, `cargo test -p nexode-ctl`, `cargo check --workspace`.
-- [x] Run real Codex smoke test: `live_codex_cli_hello_world`.
-- [x] Run forced-Codex full lifecycle test: `live_full_lifecycle` with `ANTHROPIC_API_KEY` unset.
-- [x] Run `scripts/demo.sh` with `NEXODE_DEMO_HARNESS=codex-cli`.
-- [x] Patch Codex compatibility based on real CLI output:
-  - use Codex default model path for tests/demo instead of hard-coding `gpt-4.1`
-  - detect completion from `type: "turn.completed"`
-  - parse telemetry from Codex `turn.completed` JSON usage fields
-- [x] Update `HANDOFF.md` with verification results.
+- [ ] Add `observer.rs` module with `LoopDetector` struct
+- [ ] Implement repeated-output detection (3+ identical output patterns per slot)
+- [ ] Implement stuck-timeout detection (configurable, no git diff progress after N minutes)
+- [ ] Implement budget-velocity check (>50% tokens consumed with zero worktree changes)
+- [ ] Add `ObserverAlert` event emission on loop detection
+- [ ] Add configurable action: `on_loop: alert | kill | pause`
+- [ ] Add `loop_detection` config block to `DaemonConfig`
+- [ ] Unit tests: identical outputs → alert, varied outputs → no alert, kill action → agent killed
+- [ ] Integration test: mock looping agent → daemon detects and alerts
+
+### Part 2: Sandbox Enforcement
+
+- [ ] Add `SandboxGuard` to `observer.rs`
+- [ ] Resolve worktree canonical path before agent spawn
+- [ ] Monitor agent output for file write patterns outside worktree root
+- [ ] Post-completion `git diff --name-only` check for path escapes
+- [ ] Add `sandbox_enforcement: bool` to `DaemonConfig` (default `true`)
+- [ ] Unit tests: path inside → allowed, path outside → flagged
+- [ ] Integration test: mock agent writes outside worktree → merge blocked
+
+### Part 3: Event Sequence Numbers (R-005)
+
+- [ ] Add monotonic `event_sequence: u64` to `DaemonEvent` proto (or envelope wrapper)
+- [ ] Engine increments counter on every event emit
+- [ ] Add `last_event_sequence` field to `FullStateSnapshot`
+- [ ] Update `nexode-ctl watch` to print warning on sequence gap
+- [ ] Unit tests: sequence is monotonically increasing, snapshot includes latest sequence
+- [ ] Integration test: slow consumer detects gap and requests state refresh
+
+### Part 4: Uncertainty Routing
+
+- [ ] Add `UncertaintySignal` variant to `ObserverAlert`
+- [ ] Parse agent output for uncertainty markers ("I'm not sure", "DECISION:", etc.)
+- [ ] On uncertainty signal: transition slot to PAUSED, emit alert event
+- [ ] Support `nexode-ctl dispatch resume-slot <slot-id>` with optional instruction
+- [ ] Unit tests: "DECISION:" in output → uncertainty signal → slot paused
+- [ ] Integration test: mock agent writes "DECISION: need guidance" → slot transitions to PAUSED
 
 ## Blocked
 
@@ -31,25 +58,20 @@
 
 ## Done This Sprint
 
-- Verified Codex live compatibility against the merged Sprint 2 code on `main`.
-- Confirmed the current Codex CLI emits `type: "turn.completed"` as the success marker.
-- Confirmed the current Codex CLI records usage under `usage.input_tokens`, `usage.cached_input_tokens`, and `usage.output_tokens`.
-- Fixed the Codex harness to detect and parse that real output shape.
-- Switched the Codex live-test/demo default model path to Codex's own default model because `gpt-4.1` is not supported in this account context.
-- Re-ran the real Codex smoke test and forced-Codex full lifecycle test successfully.
-- Confirmed `scripts/demo.sh` runs successfully with Codex, with the known `merge_queue` exit timing from `I-019`.
+- (Sprint 3 not yet started by Codex)
 
 ## Next Up
 
-- Review `agent/gpt/codex-verify`.
-- Merge the Codex verification follow-up once reviewed.
-- Sprint 3: Observer Loops + Safety (loop detection, uncertainty routing, sandbox enforcement, event sequence numbers)
+- pc reviews Sprint 3 code after Codex completes
+- Sprint 4 planning
 
 ## Notes
 
-- Verification prompt: `.agents/prompts/codex-verify.md`
+- Sprint 3 Codex prompt: `.agents/prompts/sprint-3-codex.md`
 - All Phase 0 + Sprint 1 + Sprint 2 decisions remain binding
-- Open issues: see `ISSUES.md` — `I-016` through `I-019` remain open
+- Open issues: see `ISSUES.md` — I-004, I-005, I-007, I-008, I-011–I-014, I-016–I-019
+- Open risks: R-001–R-003, R-005, R-006, R-008–R-010
+- R-005 (broadcast stream drops) is directly addressed by Part 3 of this sprint
+- R-008, R-009, R-010 are newly documented risks from Gemini architectural analysis
 - Live tests gated behind `--features live-test` — require `claude` or `codex` CLI installed
-- Real credential-backed Claude and Codex live verification are both complete
 - Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`

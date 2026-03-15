@@ -231,3 +231,39 @@
 - **Severity:** Low
 - **Details:** After sending `dispatch move-task slot-a merge-queue`, the script immediately prints status and exits. The merge happens asynchronously on the daemon's tick interval (2s), so "Final status" may still show `merge_queue` instead of `done`.
 - **When:** Minor cosmetic. Consider adding a wait loop for DONE after the MoveTask dispatch.
+
+---
+
+## Risks from External Analysis
+
+> Source: Gemini Agent Hypervisor IDE Architectural Analysis (March 2026). Validated against Nexode architecture by pc on 2026-03-15.
+
+### R-008: VS Code Extension Host IPC bottleneck at N>3 agent streams
+
+- **Source:** Gemini analysis Section 3 / Section 9 risk table (2026-03-15)
+- **Module:** Future Phase 2+ (VS Code extension, not yet built)
+- **Likelihood:** High
+- **Impact:** High (UI lockups, dropped agent state updates)
+- **Details:** The VS Code Extension Host runs in a single Node.js process with serialized IPC to the renderer. At 3+ agents streaming tokens at 50-100 tok/s each plus LSP updates and file watches, the channel saturates. Community reports document CPU spikes from single extensions performing heavy computation (GitHub issue #233842). This will matter when the Nexode VS Code extension is built.
+- **Mitigation:** The gRPC transport (`transport.rs`) already exists as a high-throughput channel. The VS Code extension should connect directly to the daemon via gRPC/WebSocket, bypassing the Extension Host for agent data streams. Only use Extension Host for traditional extension functionality (themes, keybindings, language support). This is a deeper fork than a standard extension — plan for it.
+- **When:** Phase 2+ when building the VS Code extension.
+
+### R-009: Semantic drift between concurrent agents (post-merge failure)
+
+- **Source:** Gemini analysis Section 6 / CodeCRDT paper findings (2026-03-15)
+- **Module:** `engine.rs`, `git.rs` (merge-and-verify)
+- **Likelihood:** Medium
+- **Impact:** High (main branch corruption, silent semantic conflicts)
+- **Details:** Git merge is syntactically aware but semantically blind. If Agent A alters a function signature in Worktree A and Agent B writes a new module calling the old signature in Worktree B, `git merge` succeeds but the build fails. D-008 post-merge verification (build + test) catches compile failures, but not runtime semantic conflicts (e.g., behavioral changes, API contract violations, duplicate logic). The CodeCRDT research measured 5-10% semantic conflict rates even with zero character-level merge failures, rising to 80% on tightly-coupled tasks.
+- **Mitigation:** Sprint 3 Observer agent is the primary mitigation — it should monitor for loop states, uncertainty routing, and coherence drift. Longer term, consider a pre-merge semantic check that compares AST signatures across active worktrees before allowing a merge to proceed. Task decomposition that assigns agents to disjoint code regions is the most effective prevention.
+- **When:** Now — this is a live risk as soon as multiple agents work on related code. Observer agent (Sprint 3) partially addresses it.
+
+### R-010: Agent CLI output format instability (harness fragility)
+
+- **Source:** Codex verify experience (2026-03-15) + Gemini analysis Section 9
+- **Module:** `harness.rs` (all harness implementations)
+- **Likelihood:** High (already experienced)
+- **Impact:** Medium (false failures, broken telemetry)
+- **Details:** Both Claude and Codex required harness adjustments after real verification. Claude needed `--verbose --output-format stream-json` (Sprint 2). Codex needed `type: "turn.completed"` detection and default model path (Codex verify). These CLIs are in active development (Codex is alpha `0.104.0-alpha.1`). Future versions may change JSON schemas, add/remove flags, or alter completion signals without notice.
+- **Mitigation:** The `AgentHarness` trait already isolates format-specific logic. Keep fallback detection paths (e.g., Codex checks `turn.completed` || `event: done` || `status: completed`). Consider a harness version pinning mechanism or a harness self-test that validates assumptions against the installed CLI version.
+- **When:** Ongoing. Every agent CLI upgrade is a potential harness regression.
