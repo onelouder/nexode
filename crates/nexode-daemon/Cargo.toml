@@ -9,9 +9,10 @@ rusqlite = { version = "0.38.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
 thiserror = "2.0.17"
-tokio = { version = "1.50.0", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.50.0", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-stream = { version = "0.1.18", features = ["net", "sync"] }
 tonic = { version = "0.14.5", features = ["transport"] }
+wait-timeout = "0.2.1"
 
 [dev-dependencies]
 tempfile = "3.23.0"

@@ -2,7 +2,7 @@
 agent: gpt
 status: review
 from: pc
-timestamp: 2026-03-14T22:17:54-07:00
+timestamp: 2026-03-14T22:59:48-07:00
 task: "Phase 0 Spike — Build and validate core Nexode daemon"
 ---
 
@@ -11,13 +11,15 @@ task: "Phase 0 Spike — Build and validate core Nexode daemon"
 ## Claim Status
 
 - `gpt` claimed this handoff on branch `agent/gpt/phase-0-spike`
-- Current focus: implementation checkpoint is committed and pushed on branch `agent/gpt/phase-0-spike`; ready for human review on GitHub
+- Current focus: branch now includes the runnable daemon engine, per-project merge queue, verification timeouts, SQLite single-owner accounting actor, and `nexode-ctl`; ready for human review on GitHub
 - Workspace scaffold is in place and `cargo check --workspace` is green
 - Session Config Manager is implemented with D-003/D-004 behavior, include resolution, `.nexode.yaml` merging, and legacy v1 wrapping
-- Token Accountant is implemented with SQLite `token_log`, `project_costs`, and project budget alert evaluation
-- Git Worktree Orchestrator is implemented with create/list/remove plus detached verification before fast-forward merge
+- Token Accountant is implemented with SQLite `token_log`, `project_costs`, project budget alert evaluation, and a dedicated actor for serialized writes
+- Git Worktree Orchestrator is implemented with create/list/remove, detached verification before fast-forward merge, and bounded verification command timeouts
 - Mock agent process manager is implemented with tokio-based stdout/stderr streaming, telemetry parsing, crash respawn, watchdog timeout handling, and `SlotAgentSwapped` emission
 - gRPC skeleton is implemented with tonic server stubs for `SubscribeEvents`, `DispatchCommand`, and `GetFullState`, backed by in-memory channels/state and verified through a real client/server test harness
+- The daemon engine now wires session loading, worktree provisioning, mock agent spawning, telemetry accounting, budget hard-kill, task-state transitions, and the per-project FIFO merge queue end-to-end
+- `nexode-ctl` now supports `status`, `watch`, and dispatching slot/task/project/agent commands against the live daemon
 - Branch is ready for human review on GitHub
 
 ## What was done (pc, Session 1 + Kanban Architecture)

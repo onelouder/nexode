@@ -3,6 +3,7 @@ use std::path::Path;
 use nexode_proto::ProjectBudgetAlert;
 use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::session::BudgetConfig;
 
@@ -41,6 +42,14 @@ pub enum TokenAccountantError {
     NegativeCount { field: &'static str, value: i64 },
 }
 
+#[derive(Debug, Error)]
+pub enum TokenAccountingServiceError {
+    #[error(transparent)]
+    Accountant(#[from] TokenAccountantError),
+    #[error("token accounting service is unavailable")]
+    Unavailable,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenUsageRecord {
     pub slot_id: String,
@@ -59,9 +68,48 @@ pub struct CostTotals {
     pub cost_usd: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageUpdate {
+    pub project_total: CostTotals,
+    pub slot_total: CostTotals,
+    pub session_total: CostTotals,
+    pub budget_alert: Option<ProjectBudgetAlert>,
+}
+
 #[derive(Debug)]
 pub struct TokenAccountant {
     connection: Connection,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenAccountingHandle {
+    tx: mpsc::Sender<AccountingRequest>,
+}
+
+#[derive(Debug)]
+enum AccountingRequest {
+    Record {
+        record: TokenUsageRecord,
+        budget: BudgetConfig,
+        response: oneshot::Sender<Result<UsageUpdate, TokenAccountantError>>,
+    },
+    ProjectTotal {
+        project_id: String,
+        response: oneshot::Sender<Result<CostTotals, TokenAccountantError>>,
+    },
+    SlotTotal {
+        project_id: String,
+        slot_id: String,
+        response: oneshot::Sender<Result<CostTotals, TokenAccountantError>>,
+    },
+    SessionTotal {
+        response: oneshot::Sender<Result<CostTotals, TokenAccountantError>>,
+    },
+    ProjectBudgetAlert {
+        project_id: String,
+        budget: BudgetConfig,
+        response: oneshot::Sender<Result<Option<ProjectBudgetAlert>, TokenAccountantError>>,
+    },
 }
 
 impl TokenAccountant {
@@ -230,6 +278,166 @@ impl TokenAccountant {
     }
 }
 
+impl TokenAccountingHandle {
+    pub fn start(path: impl AsRef<Path>) -> Result<Self, TokenAccountantError> {
+        let accountant = TokenAccountant::open(path)?;
+        Ok(Self::spawn(accountant))
+    }
+
+    pub fn start_in_memory() -> Result<Self, TokenAccountantError> {
+        let accountant = TokenAccountant::open_in_memory()?;
+        Ok(Self::spawn(accountant))
+    }
+
+    pub async fn record_usage(
+        &self,
+        record: TokenUsageRecord,
+        budget: BudgetConfig,
+    ) -> Result<UsageUpdate, TokenAccountingServiceError> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.tx
+            .send(AccountingRequest::Record {
+                record,
+                budget,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?;
+        response_rx
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?
+            .map_err(TokenAccountingServiceError::from)
+    }
+
+    pub async fn project_total(
+        &self,
+        project_id: impl Into<String>,
+    ) -> Result<CostTotals, TokenAccountingServiceError> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.tx
+            .send(AccountingRequest::ProjectTotal {
+                project_id: project_id.into(),
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?;
+        response_rx
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?
+            .map_err(TokenAccountingServiceError::from)
+    }
+
+    pub async fn slot_total(
+        &self,
+        project_id: impl Into<String>,
+        slot_id: impl Into<String>,
+    ) -> Result<CostTotals, TokenAccountingServiceError> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.tx
+            .send(AccountingRequest::SlotTotal {
+                project_id: project_id.into(),
+                slot_id: slot_id.into(),
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?;
+        response_rx
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?
+            .map_err(TokenAccountingServiceError::from)
+    }
+
+    pub async fn session_total(&self) -> Result<CostTotals, TokenAccountingServiceError> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.tx
+            .send(AccountingRequest::SessionTotal {
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?;
+        response_rx
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?
+            .map_err(TokenAccountingServiceError::from)
+    }
+
+    pub async fn project_budget_alert(
+        &self,
+        project_id: impl Into<String>,
+        budget: BudgetConfig,
+    ) -> Result<Option<ProjectBudgetAlert>, TokenAccountingServiceError> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.tx
+            .send(AccountingRequest::ProjectBudgetAlert {
+                project_id: project_id.into(),
+                budget,
+                response: response_tx,
+            })
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?;
+        response_rx
+            .await
+            .map_err(|_| TokenAccountingServiceError::Unavailable)?
+            .map_err(TokenAccountingServiceError::from)
+    }
+
+    fn spawn(accountant: TokenAccountant) -> Self {
+        let (tx, mut rx) = mpsc::channel(64);
+        std::thread::Builder::new()
+            .name("nexode-accounting".to_string())
+            .spawn(move || run_accounting_actor(accountant, &mut rx))
+            .expect("spawn accounting actor");
+        Self { tx }
+    }
+}
+
+fn run_accounting_actor(accountant: TokenAccountant, rx: &mut mpsc::Receiver<AccountingRequest>) {
+    let accountant = accountant;
+    while let Some(request) = rx.blocking_recv() {
+        match request {
+            AccountingRequest::Record {
+                record,
+                budget,
+                response,
+            } => {
+                let result = (|| {
+                    accountant.record(&record)?;
+                    Ok(UsageUpdate {
+                        project_total: accountant.get_project_total(&record.project_id)?,
+                        slot_total: accountant.get_slot_total(&record.project_id, &record.slot_id)?,
+                        session_total: accountant.get_session_total()?,
+                        budget_alert: accountant.project_budget_alert(&record.project_id, &budget)?,
+                    })
+                })();
+                let _ = response.send(result);
+            }
+            AccountingRequest::ProjectTotal {
+                project_id,
+                response,
+            } => {
+                let _ = response.send(accountant.get_project_total(&project_id));
+            }
+            AccountingRequest::SlotTotal {
+                project_id,
+                slot_id,
+                response,
+            } => {
+                let _ = response.send(accountant.get_slot_total(&project_id, &slot_id));
+            }
+            AccountingRequest::SessionTotal { response } => {
+                let _ = response.send(accountant.get_session_total());
+            }
+            AccountingRequest::ProjectBudgetAlert {
+                project_id,
+                budget,
+                response,
+            } => {
+                let _ = response.send(accountant.project_budget_alert(&project_id, &budget));
+            }
+        }
+    }
+}
+
 fn to_sql_i64(field: &'static str, value: u64) -> Result<i64, TokenAccountantError> {
     i64::try_from(value).map_err(|_| TokenAccountantError::IntegerOverflow { field, value })
 }
@@ -356,5 +564,70 @@ mod tests {
         assert!(hard_alert.hard_kill);
         assert_eq!(hard_alert.limit_usd, 10.0);
         assert_eq!(hard_alert.current_usd, 10.5);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn accounting_handle_serializes_usage_updates() {
+        let handle = TokenAccountingHandle::start_in_memory().expect("start accounting handle");
+        let budget = BudgetConfig {
+            max_usd: Some(10.0),
+            warn_usd: Some(8.0),
+        };
+
+        let mut tasks = Vec::new();
+        for idx in 0..4u64 {
+            let handle = handle.clone();
+            let budget = budget.clone();
+            tasks.push(tokio::spawn(async move {
+                handle
+                    .record_usage(
+                        TokenUsageRecord {
+                            slot_id: format!("slot-{idx}"),
+                            project_id: "project-1".to_string(),
+                            timestamp_ms: idx as i64,
+                            tokens_in: 10,
+                            tokens_out: 5,
+                            model: "codex".to_string(),
+                            cost_usd: 2.5,
+                        },
+                        budget,
+                    )
+                    .await
+                    .expect("record usage")
+            }));
+        }
+
+        let mut saw_hard_alert = false;
+        for task in tasks {
+            let update = task.await.expect("join record task");
+            saw_hard_alert |= update
+                .budget_alert
+                .as_ref()
+                .is_some_and(|alert| alert.hard_kill);
+        }
+
+        assert!(saw_hard_alert);
+        assert_eq!(
+            handle
+                .project_total("project-1")
+                .await
+                .expect("project totals after records"),
+            CostTotals {
+                tokens_in: 40,
+                tokens_out: 20,
+                cost_usd: 10.0,
+            }
+        );
+        assert_eq!(
+            handle
+                .session_total()
+                .await
+                .expect("session totals after records"),
+            CostTotals {
+                tokens_in: 40,
+                tokens_out: 20,
+                cost_usd: 10.0,
+            }
+        );
     }
 }

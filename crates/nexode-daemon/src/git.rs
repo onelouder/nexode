@@ -1,20 +1,25 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
+use wait_timeout::ChildExt;
 
 use crate::session::VerifyConfig;
 
 static VERIFY_COUNTER: AtomicU64 = AtomicU64::new(0);
+const DEFAULT_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(300);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GitWorktreeOrchestrator {
     repo_root: PathBuf,
     worktree_root: PathBuf,
+    verification_timeout: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +91,14 @@ pub enum GitWorktreeError {
         stdout: String,
         stderr: String,
     },
+    #[error("{step} verification timed out for `{command}` after {timeout:?}")]
+    VerificationTimedOut {
+        step: &'static str,
+        command: String,
+        timeout: Duration,
+        stdout: String,
+        stderr: String,
+    },
 }
 
 impl GitWorktreeOrchestrator {
@@ -122,6 +135,7 @@ impl GitWorktreeOrchestrator {
         Ok(Self {
             repo_root,
             worktree_root,
+            verification_timeout: DEFAULT_VERIFICATION_TIMEOUT,
         })
     }
 
@@ -129,10 +143,23 @@ impl GitWorktreeOrchestrator {
         repo_path: impl AsRef<Path>,
         worktree_root: impl AsRef<Path>,
     ) -> Result<Self, GitWorktreeError> {
+        Self::with_worktree_root_and_timeout(
+            repo_path,
+            worktree_root,
+            DEFAULT_VERIFICATION_TIMEOUT,
+        )
+    }
+
+    pub fn with_worktree_root_and_timeout(
+        repo_path: impl AsRef<Path>,
+        worktree_root: impl AsRef<Path>,
+        verification_timeout: Duration,
+    ) -> Result<Self, GitWorktreeError> {
         let repo_root = Self::new(repo_path)?.repo_root;
         Ok(Self {
             repo_root,
             worktree_root: worktree_root.as_ref().to_path_buf(),
+            verification_timeout,
         })
     }
 
@@ -384,21 +411,49 @@ impl GitWorktreeOrchestrator {
         step: &'static str,
         command: &str,
     ) -> Result<CommandReport, GitWorktreeError> {
-        let output = Command::new("sh")
+        let mut child = Command::new("sh")
             .arg("-lc")
             .arg(command)
             .current_dir(cwd)
-            .output()
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|source| GitWorktreeError::Io {
                 path: cwd.to_path_buf(),
                 source,
             })?;
 
+        let status = match child
+            .wait_timeout(self.verification_timeout)
+            .map_err(|source| GitWorktreeError::Io {
+                path: cwd.to_path_buf(),
+                source,
+            })? {
+            Some(status) => status,
+            None => {
+                let _ = child.kill();
+                let status = child.wait().map_err(|source| GitWorktreeError::Io {
+                    path: cwd.to_path_buf(),
+                    source,
+                })?;
+                let (stdout, stderr) = read_child_output(&mut child, cwd)?;
+                let _ = status;
+                return Err(GitWorktreeError::VerificationTimedOut {
+                    step,
+                    command: command.to_string(),
+                    timeout: self.verification_timeout,
+                    stdout,
+                    stderr,
+                });
+            }
+        };
+
+        let (stdout, stderr) = read_child_output(&mut child, cwd)?;
         let report = CommandReport {
             command: command.to_string(),
-            status_code: exit_code(output.status),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            status_code: exit_code(status),
+            stdout,
+            stderr,
         };
 
         if report.status_code != 0 {
@@ -525,6 +580,33 @@ fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or(-1)
 }
 
+fn read_child_output(
+    child: &mut Child,
+    cwd: &Path,
+) -> Result<(String, String), GitWorktreeError> {
+    let stdout = read_stream(child.stdout.take(), cwd)?;
+    let stderr = read_stream(child.stderr.take(), cwd)?;
+    Ok((stdout, stderr))
+}
+
+fn read_stream(
+    mut stream: Option<impl Read>,
+    cwd: &Path,
+) -> Result<String, GitWorktreeError> {
+    let Some(mut stream) = stream.take() else {
+        return Ok(String::new());
+    };
+
+    let mut buffer = Vec::new();
+    stream
+        .read_to_end(&mut buffer)
+        .map_err(|source| GitWorktreeError::Io {
+            path: cwd.to_path_buf(),
+            source,
+        })?;
+    Ok(String::from_utf8_lossy(&buffer).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,6 +714,46 @@ mod tests {
         match error {
             GitWorktreeError::VerificationFailed { step, .. } => assert_eq!(step, "build"),
             other => panic!("expected verification failure, got {other:?}"),
+        }
+
+        assert_eq!(
+            fs::read_to_string(fixture.repo.join("app.txt")).expect("read main branch file"),
+            "base\n"
+        );
+    }
+
+    #[test]
+    fn verification_timeout_does_not_update_target_branch() {
+        let fixture = GitFixture::new();
+        let orchestrator = GitWorktreeOrchestrator::with_worktree_root_and_timeout(
+            &fixture.repo,
+            &fixture.worktrees,
+            Duration::from_millis(100),
+        )
+        .expect("build orchestrator");
+        let worktree = orchestrator
+            .create_worktree("slot-a", "agent/slot-a", "main")
+            .expect("create worktree");
+
+        fixture.write_and_commit(
+            &worktree.path,
+            "app.txt",
+            "candidate change\n",
+            "candidate change",
+        );
+
+        let verify = VerifyConfig {
+            build: Some("sleep 1".to_string()),
+            test: None,
+        };
+
+        let error = orchestrator
+            .merge_and_verify(&worktree.path, "main", Some(&verify))
+            .expect_err("verification should time out");
+
+        match error {
+            GitWorktreeError::VerificationTimedOut { step, .. } => assert_eq!(step, "build"),
+            other => panic!("expected verification timeout, got {other:?}"),
         }
 
         assert_eq!(

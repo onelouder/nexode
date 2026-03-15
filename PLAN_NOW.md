@@ -5,7 +5,7 @@
 
 ## Current Sprint
 
-- **Goal:** Land the Phase 0 runtime slice: workspace, proto, parser, accountant, git orchestration, mock agent lifecycle, and gRPC skeleton
+- **Goal:** Land the Phase 0 runtime slice end-to-end: workspace, proto, parser, accountant, git orchestration, mock lifecycle, engine loop, merge queue, and CLI client
 - **Deadline:** 2026-03-28
 - **Active Agent:** gpt
 
@@ -21,8 +21,13 @@
 - [x] Implement the Git Worktree Orchestrator with worktree lifecycle and merge-plus-verify flow
 - [x] Implement the mock agent process manager with stdout/stderr streaming, crash respawn, and watchdog timeout handling
 - [x] Implement the daemon-side gRPC skeleton with event streaming, command dispatch, and full-state stubs
+- [x] Add verification timeouts to git build/test checks
+- [x] Introduce a single-owner SQLite accounting actor for async runtime use
+- [x] Implement the runnable daemon engine loop with mock slot spawning, telemetry updates, budget hard-kill, and event-driven state snapshots
+- [x] Implement the per-project FIFO merge queue with full-auto progression to `DONE`
+- [x] Wire `nexode-ctl` for `status`, `watch`, and dispatch commands against the daemon
 - [x] Refresh GitHub auth and push `agent/gpt/phase-0-spike` for review
-- [ ] Start the merge queue or `nexode-ctl` client pass after review
+- [ ] Human review the Phase 0 runtime branch and decide whether to merge or continue with post-review cleanup
 
 ## Blocked
 
@@ -41,6 +46,8 @@
 - Session parser tests cover include cycles, unknown fields, repo-local overrides, explicit array clears, and v1 wrapping.
 - Token accountant tests cover project/session aggregation plus soft/hard budget alerts.
 - Worktree tests cover create/list/remove, verification-gated merge success, git conflict detection, and verify-failure refusal to update the target branch.
+- Worktree tests also cover verification-command timeout refusal.
 - Process-manager tests cover telemetry parsing, crash recovery with `SlotAgentSwapped`, and watchdog-triggered respawn.
 - gRPC tests cover over-the-wire `GetFullState`, `DispatchCommand`, and `SubscribeEvents`.
+- Engine tests cover the full-auto merge queue happy path and budget-triggered project archival.
 - Current branch state is pushed to `origin/agent/gpt/phase-0-spike` and ready for review.
