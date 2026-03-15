@@ -8,29 +8,29 @@
 
 ## Open Issues
 
-### I-001: `rusqlite::Connection` is `!Send` — blocks async engine loop integration
+### ~~I-001: `rusqlite::Connection` is `!Send` — blocks async engine loop integration~~ RESOLVED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** `accounting.rs`
 - **Severity:** Medium
-- **Details:** `TokenAccountant` holds a bare `rusqlite::Connection`, which is `!Send`. The engine loop will need to record telemetry from multiple async slot supervisors concurrently. Current structure cannot be shared across tokio tasks without wrapping in `Arc<Mutex<Connection>>`, using `tokio::task::spawn_blocking`, or switching to an async SQLite wrapper (e.g., `tokio-rusqlite`).
-- **When:** Must resolve before engine loop integration (Sprint 1).
+- **Resolved:** 2026-03-14, commit `93da7894`
+- **Resolution:** New `TokenAccountingHandle` wraps the accountant in a dedicated `std::thread` actor with `mpsc::channel` for request/response. `blocking_recv()` on the actor thread, async callers use `oneshot`.
 
-### I-002: No timeout on verification commands in `git.rs`
+### ~~I-002: No timeout on verification commands in `git.rs`~~ RESOLVED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** `git.rs` → `run_shell_step()`
 - **Severity:** Medium
-- **Details:** Build and test commands run via `Command::output()` with no timeout. A hanging build or infinite-loop test will block the merge-and-verify flow indefinitely. The process manager has a watchdog, but verification runs outside that supervision.
-- **When:** Must resolve before real build/test commands are configured.
+- **Resolved:** 2026-03-14, commit `93da7894`
+- **Resolution:** Added `wait-timeout` crate. `run_shell_step` now spawns a child with piped output, calls `wait_timeout()`, kills on expiry, returns `VerificationTimedOut` error. Test verifies timeout prevents target branch advancement.
 
-### I-003: Synchronous git operations in async context
+### ~~I-003: Synchronous git operations in async context~~ RESOLVED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** `git.rs`
 - **Severity:** Medium
-- **Details:** `GitWorktreeOrchestrator` uses `std::process::Command` (blocking). When called from the tokio engine loop, blocking calls on the runtime thread pool will starve other tasks. Should use `tokio::task::spawn_blocking` or switch to `tokio::process::Command`.
-- **When:** Must resolve before engine loop integration (Sprint 1).
+- **Resolved:** 2026-03-14, commit `93da7894`
+- **Resolution:** `engine.rs` wraps all git operations in `tokio::task::spawn_blocking()` — both worktree creation and merge-and-verify. `GitWorktreeOrchestrator` gained `Clone` derive to support moves into blocking closures.
 
 ### I-004: `provider_config` shallow merge not implemented
 
@@ -48,13 +48,13 @@
 - **Details:** `CREATE TABLE IF NOT EXISTS` won't alter existing tables if the schema evolves. No version tracking or migration system.
 - **When:** Before any schema changes in later phases.
 
-### I-006: Merge queue and engine loop not yet implemented
+### ~~I-006: Merge queue and engine loop not yet implemented~~ RESOLVED
 
 - **Source:** Phase 0 review (2026-03-14)
-- **Module:** (not yet created)
+- **Module:** `engine.rs` (new, 1346 lines)
 - **Severity:** High
-- **Details:** Sprint exit criteria 4 (5 consecutive merge-then-verify cycles) and 6 (nexode-ctl client) are not met. The per-project FIFO merge queue (D-009), the `tokio::select!` engine loop, and nexode-ctl are the remaining Phase 0 deliverables.
-- **When:** Sprint 1 (next sprint).
+- **Resolved:** 2026-03-14, commit `93da7894`
+- **Resolution:** Full engine loop with `tokio::select!`, per-project FIFO merge queue, mock agent spawning, telemetry recording, budget hard-kill, and nexode-ctl CLI (308 lines, clap-based). Integration tests prove 3-slot full-auto merge pipeline and budget-triggered archival.
 
 ---
 
@@ -122,3 +122,19 @@
 - **Impact:** Medium (no feedback on command execution)
 - **Details:** `dispatch_command` always returns `success: true` as long as the channel is open, regardless of whether the command was processed or what happened. No request/response correlation.
 - **Mitigation:** Engine loop needs to add command acknowledgment with result status. Consider a command ID → result callback pattern.
+
+### I-007: Merge queue drains on tick only (2s delay)
+
+- **Source:** Phase 0 review v2 (2026-03-14)
+- **Module:** `engine.rs`
+- **Severity:** Low
+- **Details:** `drain_merge_queues()` runs on the tick interval (default 2s), not immediately when a task enters MERGE_QUEUE via `enqueue_merge()`. For Phase 0 this is fine. For production, consider draining immediately on enqueue.
+- **When:** When merge latency matters (Phase 2+).
+
+### I-008: Daemon `main.rs` uses manual arg parsing instead of `clap`
+
+- **Source:** Phase 0 review v2 (2026-03-14)
+- **Module:** `crates/nexode-daemon/src/main.rs`
+- **Severity:** Low
+- **Details:** The daemon binary does manual `std::env::args()` parsing with `--flag value` matching, while `nexode-ctl` uses `clap` with derive macros. Minor inconsistency — no `--help` support on the daemon.
+- **When:** Whenever someone touches daemon CLI args.
