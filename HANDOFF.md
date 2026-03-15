@@ -1,36 +1,42 @@
-# HANDOFF.md — Turn-Based Coordination
-
-> This file is a mutex. Only the current holder modifies the "Current Holder" section.
-> All agents may append to the Handoff Log (append-only, newest first).
-> See `docs/agent_guides/handoff_protocol.md` for the full signaling protocol.
-
-## Current Holder
-
-```yaml
-agent: jarvis
-claimed: null
-task: Review and merge PC's template patches from agent/pc/template-patches branch
+---
+agent: gpt
 status: handoff
-blocked_on: null
-inputs:
-  - branch: agent/pc/template-patches
-  - files_modified: AGENTS.md, CLAUDE.md, HANDOFF.md, .agents/perplexity.md, .agents/openai.md, .agents/openclaw.md
-  - files_added: docs/agent_guides/handoff_protocol.md, docs/agent_guides/onboarding.md
-done_criteria: Review changes, merge to main (or request revisions), update HANDOFF.md
-```
+from: pc
+timestamp: 2026-03-14T18:36:00-07:00
+task: "Phase 0 Spike — Build and validate core Nexode daemon"
+---
 
-## Requests
+# Handoff: pc → gpt (Codex)
 
-> Agents can post requests here without holding the baton.
+## What was done (pc, Session 1 + Kanban Architecture)
 
-- [ ] _No pending requests_
+1. **Normalized master-spec.md** — Fixed PDF artifacts, added 74 HTML anchors, locked at v2.0.1
+2. **Resolved all 8 spec contradictions** — D-001 through D-008, then superseded D-001 with D-009
+3. **Kanban state machine architecture** — MERGE_QUEUE + RESOLVING states, barrier sync, autonomy overrides
+4. **Quarantined 33 deferred requirements** — Phase 4/5/Pool scope separated from active work
+5. **Updated AGENTS.md** — Spec pin, decomposition guardrail
+6. **Amended D-004** — Array union merge strategy for config cascade
+7. **Amended D-008** — Post-merge build/test verification for kill criteria
+8. **All decisions ACCEPTED** — D-002 through D-010 are now binding
 
-## Handoff Log
+## What to do (gpt/Codex)
 
-<!-- APPEND-ONLY — newest first. Do not edit or delete previous entries. -->
+Read `.agents/CODEX-SPRINT-0.md` for full instructions. Summary:
 
-| Timestamp | From | To | Summary |
-|-----------|------|----|---------|
-| 2026-03-09T00:30 | pc | jarvis | Template patches applied on `agent/pc/template-patches`. 6 files modified, 2 new files. Standardized agent IDs, added 4-phase session protocol with close step, 3-layer handoff signaling, expanded capability matrix, rewrote platform extensions. Ready for review + merge. |
-| 2026-03-09T00:21 | human | pc | First collaboration: PC applying template patches based on Jarvis + PC joint design review |
-| _template created_ | — | — | Repository initialized by Jarvis |
+- **Branch:** `agent/gpt/phase-0-spike`
+- **Goal:** Rust daemon that parses session.yaml, spawns mock agents into git worktrees, tracks cost, and merges work back with post-merge build verification
+- **Cargo workspace:** `nexode-daemon`, `nexode-proto`, `nexode-ctl`
+- **Key deliverables:** Proto file (with D-009 enum), session parser (with D-004 merge logic), agent lifecycle, merge queue, nexode-ctl
+- **Exit criteria:** 6 specific tests defined in the sprint doc
+
+## Files to read first
+
+1. `AGENTS.md` — Rules, capabilities, git conventions
+2. `.agents/CODEX-SPRINT-0.md` — Full sprint instructions
+3. `DECISIONS.md` — All accepted architectural decisions
+4. `docs/spec/master-spec.md` — Sections 2, 3, 4, 8
+5. `docs/architecture/kanban-state-machine.md` — Merge queue and state transitions
+
+## Files NOT to modify
+
+- `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*` — pc's domain
