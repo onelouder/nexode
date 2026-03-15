@@ -31,28 +31,42 @@
   - [x] Basic context compiler (task + globs + git diff + README)
   - [x] Harness selection (model inference + explicit override in session.yaml)
 
-### M2a: Sprint 2 — Real Agent Integration + Critical Fixes 🔄
+### M2a: Sprint 2 — Real Agent Integration + Critical Fixes ✅
+- **Target:** 2026-03-29
+- **Status:** Complete (merged 2026-03-15)
+- **Agent:** gpt (Codex)
+- **Review:** `docs/reviews/sprint-2-review.md`
+- **Deliverables:**
+  - [x] Fix I-009: `completion_detected` semantics (non-zero exit = failure)
+  - [x] Fix I-010: Emit `AgentStateChanged(Executing)` after agent swap
+  - [x] Fix I-015: JSON parsing for completion detection (replace substring matching)
+  - [x] R-007: Command acknowledgment (oneshot request/response, `CommandOutcome` enum)
+  - [x] Live smoke tests for ClaudeCode and CodexCli harnesses (`--features live-test`)
+  - [x] End-to-end demo script (`scripts/demo.sh`)
+
+### M2b: Codex CLI Verification ✅
+- **Target:** 2026-03-15
+- **Status:** Complete (merged 2026-03-15)
+- **Agent:** gpt (Codex)
+- **Review:** `docs/reviews/codex-verify-review.md`
+- **Deliverables:**
+  - [x] Live Codex CLI smoke test (`live_codex_cli_hello_world`)
+  - [x] Forced-Codex full lifecycle test (`live_full_lifecycle`)
+  - [x] Codex completion detection aligned to real `turn.completed` output
+  - [x] Codex telemetry parsing aligned to real usage fields
+  - [x] Default model path for Codex (no `--model` flag when `"default"`)
+  - [x] Demo script with `codex-cli` harness
+
+### M2c: Sprint 3 — Observer Loops + Safety 🔄
 - **Target:** 2026-03-29
 - **Status:** In Progress
 - **Agent:** gpt (Codex)
-- **Branch:** `agent/gpt/sprint-2-real-agents`
+- **Prompt:** `.agents/prompts/sprint-3-codex.md`
 - **Deliverables:**
-  - [ ] Fix I-009: `completion_detected` semantics (non-zero exit = failure)
-  - [ ] Fix I-010: Emit `AgentStateChanged(Executing)` after agent swap
-  - [ ] Fix I-015: JSON parsing for completion detection (replace substring matching)
-  - [ ] R-007: Command acknowledgment (oneshot request/response, `CommandOutcome` enum)
-  - [ ] Live smoke tests for ClaudeCode and CodexCli harnesses (`--features live-test`)
-  - [ ] End-to-end demo script (`scripts/demo.sh`)
-
-### M2b: Sprint 3 — Observer Loops + Safety ⏳
-- **Target:** TBD
-- **Status:** Not Started
-- **Deliverables:**
-  - [ ] Loop detection (detect agent spinning without progress)
-  - [ ] Uncertainty routing (agent signals "I'm stuck", daemon routes to operator)
-  - [ ] Sandbox enforcement (agent can't write outside worktree)
-  - [ ] Event sequence numbers (fix R-005 broadcast stream drops)
-  - [ ] Unattended operation soak test (24-hour run)
+  - [ ] Loop detection (`LoopDetector` in `observer.rs` — repeated output, stuck timeout, budget velocity)
+  - [ ] Sandbox enforcement (`SandboxGuard` — worktree boundary checks, symlink escape prevention)
+  - [ ] Event sequence numbers (R-005 fix — monotonic counter, gap detection, state catch-up)
+  - [ ] Uncertainty routing (agent "I'm stuck" detection, auto-pause, operator resume)
 
 ### M3: Phase 2 — TUI + VS Code Extension ⏳
 - **Target:** TBD
@@ -96,4 +110,7 @@
 - [ ] Agent-initiated branching (agent creates sub-branches within worktree)
 - [ ] Cost prediction before agent dispatch
 - [ ] Telemetry format documentation (R-003)
+- [ ] VS Code Extension Host IPC mitigation (R-008 — gRPC bypass for agent streams)
+- [ ] Pre-merge semantic conflict detection (R-009 — AST signature comparison)
+- [ ] Harness version pinning / self-test (R-010)
 - [ ] Phase 5 / Pool requirements (see `docs/spec/deferred.md`)
