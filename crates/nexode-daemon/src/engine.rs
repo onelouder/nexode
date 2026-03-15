@@ -6,11 +6,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nexode_proto::hypervisor_event;
+use nexode_proto::observer_alert;
 use nexode_proto::operator_command;
 use nexode_proto::{
     AgentMode, AgentSlot, AgentState, AgentStateChanged, AgentTelemetryUpdated, CommandOutcome,
-    CommandResponse, FullStateSnapshot, HypervisorEvent, OperatorCommand, Project,
-    ProjectBudgetAlert, SlotAgentSwapped, TaskNode, TaskStatus, TaskStatusChanged,
+    CommandResponse, FullStateSnapshot, HypervisorEvent, LoopDetected, ObserverAlert,
+    ObserverIntervention, OperatorCommand, Project, ProjectBudgetAlert, ResumeSlot,
+    SandboxViolation, SlotAgentSwapped, TaskNode, TaskStatus, TaskStatusChanged, UncertaintySignal,
     WorktreeStatusChanged,
 };
 use thiserror::Error;
@@ -26,6 +28,10 @@ use crate::accounting::{
 use crate::context::{ContextError, compile_context};
 use crate::git::{GitWorktreeError, GitWorktreeOrchestrator};
 use crate::harness::{HarnessConfig, HarnessError, resolve_harness};
+use crate::observer::{
+    LoopAction, LoopCheck, LoopDetector, ObserverConfig, ObserverFinding, ObserverFindingKind,
+    SandboxGuard,
+};
 use crate::process::{
     AgentProcessError, AgentProcessEvent, AgentProcessManager, AgentProcessSpec, OutputStream,
     ParsedTelemetry, SlotSupervisor,
@@ -60,6 +66,7 @@ pub struct DaemonConfig {
     pub tick_interval: Duration,
     pub checkpoint_interval: Duration,
     pub verification_timeout: Duration,
+    pub observer: ObserverConfig,
 }
 
 impl DaemonConfig {
@@ -73,6 +80,7 @@ impl DaemonConfig {
             tick_interval: DEFAULT_TICK_INTERVAL,
             checkpoint_interval: DEFAULT_CHECKPOINT_INTERVAL,
             verification_timeout: DEFAULT_VERIFICATION_TIMEOUT,
+            observer: ObserverConfig::default(),
         }
     }
 }
@@ -224,9 +232,12 @@ struct DaemonEngine {
     wal: Wal,
     daemon_instance_id: String,
     state: RuntimeState,
+    loop_detector: LoopDetector,
+    sandbox_guard: SandboxGuard,
 }
 
 impl DaemonEngine {
+    #[allow(clippy::too_many_arguments)]
     async fn bootstrap(
         config: DaemonConfig,
         service: HypervisorService,
@@ -241,6 +252,8 @@ impl DaemonEngine {
     ) -> Result<Self, DaemonError> {
         let (process_tx, process_rx) = mpsc::unbounded_channel();
         let process_manager = AgentProcessManager::new();
+        let loop_detector = LoopDetector::new(config.observer.loop_detection.clone());
+        let sandbox_guard = SandboxGuard::new(config.observer.sandbox_enforcement);
         let mut engine = Self {
             config,
             service,
@@ -252,6 +265,8 @@ impl DaemonEngine {
             wal,
             daemon_instance_id: daemon_instance_id.clone(),
             state,
+            loop_detector,
+            sandbox_guard,
         };
 
         engine.wal.append(&WalEntry::SessionStarted {
@@ -331,6 +346,7 @@ impl DaemonEngine {
                     self.handle_process_event(event).await?;
                 }
                 _ = tick.tick() => {
+                    self.run_observer_tick().await?;
                     self.drain_merge_queues().await?;
                 }
                 _ = async {
@@ -452,6 +468,29 @@ impl DaemonEngine {
                 self.start_slot(&slot_id).await?;
                 self.command_response(&command_id, CommandOutcome::Executed, None)
             }
+            operator_command::Action::ResumeSlot(ResumeSlot {
+                slot_id,
+                instruction,
+            }) => {
+                if self.current_task_status(&slot_id) != Some(TaskStatus::Paused) {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::InvalidTransition,
+                        Some(format!("slot `{slot_id}` is not paused")),
+                    ));
+                }
+                if let Some(slot) = self.slot_mut(&slot_id)
+                    && !instruction.trim().is_empty()
+                {
+                    slot.task = format!(
+                        "{}\n\nOperator guidance:\n{}",
+                        slot.task.trim(),
+                        instruction.trim(),
+                    );
+                }
+                self.start_slot(&slot_id).await?;
+                self.command_response(&command_id, CommandOutcome::Executed, None)
+            }
             operator_command::Action::KillAgent(kill) => {
                 let Some(slot_id) = self.find_slot_by_agent(&kill.agent_id) else {
                     return Ok(self.command_response(
@@ -518,10 +557,10 @@ impl DaemonEngine {
     }
 
     async fn dispatch_slot(&mut self, slot_id: &str, raw_nl: &str) -> Result<(), DaemonError> {
-        if let Some(slot) = self.slot_mut(slot_id) {
-            if !raw_nl.trim().is_empty() {
-                slot.task = raw_nl.trim().to_string();
-            }
+        if let Some(slot) = self.slot_mut(slot_id)
+            && !raw_nl.trim().is_empty()
+        {
+            slot.task = raw_nl.trim().to_string();
         }
         self.start_slot(slot_id).await
     }
@@ -620,6 +659,9 @@ impl DaemonEngine {
             }
             worktree_path
         };
+        let worktree_path = std::fs::canonicalize(&worktree_path)?;
+        self.sandbox_guard.register_slot(slot_id, &worktree_path)?;
+        self.loop_detector.reset_slot(slot_id);
 
         let slot_config = SlotConfig {
             id: slot_details.slot_id.clone(),
@@ -671,7 +713,7 @@ impl DaemonEngine {
         let spec = AgentProcessSpec {
             slot_id: slot_id.to_string(),
             agent_id_prefix: Some(self.daemon_instance_id.clone()),
-            worktree_path,
+            worktree_path: worktree_path.clone(),
             command,
             harness,
             watchdog_timeout: Duration::from_secs(slot_details.timeout_minutes.saturating_mul(60)),
@@ -684,6 +726,7 @@ impl DaemonEngine {
             .spawn_slot(spec, self.process_tx.clone())?;
 
         if let Some(slot) = self.slot_mut(slot_id) {
+            slot.worktree_path = Some(worktree_path);
             slot.supervisor = Some(supervisor);
         }
         self.set_task_status(slot_id, TaskStatus::Working, None, None)?;
@@ -720,6 +763,7 @@ impl DaemonEngine {
                     hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                         agent_id,
                         new_state: AgentState::Executing as i32,
+                        slot_id,
                     }),
                     None,
                 );
@@ -735,11 +779,24 @@ impl DaemonEngine {
                     self.apply_telemetry(&slot_id, &agent_id, &telemetry)
                         .await?;
                 }
+                if let Some(finding) =
+                    self.loop_detector
+                        .observe_output(&slot_id, Some(&agent_id), &line)
+                {
+                    self.handle_observer_finding(finding).await?;
+                }
+                if let Some(finding) =
+                    self.sandbox_guard
+                        .inspect_output(&slot_id, Some(&agent_id), &line)
+                {
+                    self.handle_observer_finding(finding).await?;
+                }
                 if matches!(stream, OutputStream::Stderr) && line.contains("spawn error:") {
                     self.publish_event(
                         hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                             agent_id,
                             new_state: AgentState::Blocked as i32,
+                            slot_id,
                         }),
                         None,
                     );
@@ -753,16 +810,34 @@ impl DaemonEngine {
             } => {
                 if success {
                     let mut mode = AgentMode::Plan;
+                    let mut worktree_path = None;
                     if let Some(slot) = self.slot_mut(&slot_id) {
                         slot.supervisor = None;
                         slot.current_agent_pid = None;
                         mode = slot.mode;
+                        worktree_path = slot.worktree_path.clone();
+                    }
+                    if let Some(path) = worktree_path
+                        && let Some(descriptor) = self.slot_descriptor(&slot_id)
+                    {
+                        let changed_paths = descriptor.orchestrator.changed_paths(&path)?;
+                        if let Some(finding) = self.sandbox_guard.validate_paths(
+                            &slot_id,
+                            Some(&agent_id),
+                            &changed_paths,
+                        ) {
+                            self.append_current_slot_state(&slot_id)?;
+                            self.handle_observer_finding(finding).await?;
+                            self.sync_snapshot().await;
+                            return Ok(());
+                        }
                     }
                     self.append_current_slot_state(&slot_id)?;
                     self.publish_event(
                         hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                             agent_id: agent_id.clone(),
                             new_state: AgentState::Review as i32,
+                            slot_id: slot_id.clone(),
                         }),
                         None,
                     );
@@ -780,16 +855,20 @@ impl DaemonEngine {
                         hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                             agent_id,
                             new_state: AgentState::Blocked as i32,
+                            slot_id,
                         }),
                         None,
                     );
                 }
             }
-            AgentProcessEvent::TimedOut { agent_id, .. } => {
+            AgentProcessEvent::TimedOut {
+                slot_id, agent_id, ..
+            } => {
                 self.publish_event(
                     hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                         agent_id,
                         new_state: AgentState::Blocked as i32,
+                        slot_id,
                     }),
                     None,
                 );
@@ -799,6 +878,7 @@ impl DaemonEngine {
                     slot.current_agent_id = Some(swapped.new_agent_id.clone());
                     slot.current_agent_pid = None;
                 }
+                self.loop_detector.reset_slot(&swapped.slot_id);
                 self.append_current_slot_state(&swapped.slot_id)?;
                 self.publish_event(
                     hypervisor_event::Payload::SlotAgentSwapped(swapped.clone()),
@@ -808,6 +888,7 @@ impl DaemonEngine {
                     hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                         agent_id: swapped.new_agent_id,
                         new_state: AgentState::Executing as i32,
+                        slot_id: swapped.slot_id,
                     }),
                     None,
                 );
@@ -961,6 +1042,56 @@ impl DaemonEngine {
         Ok(())
     }
 
+    async fn run_observer_tick(&mut self) -> Result<(), DaemonError> {
+        let checks = self
+            .state
+            .projects
+            .iter()
+            .flat_map(|(_, project)| {
+                project.slots.values().filter_map(|slot| {
+                    if slot.task_status != TaskStatus::Working || slot.supervisor.is_none() {
+                        return None;
+                    }
+                    let worktree_path = slot.worktree_path.clone()?;
+                    Some((
+                        slot.id.clone(),
+                        slot.current_agent_id.clone(),
+                        slot.total_tokens,
+                        slot.provider_config
+                            .get("max_context_tokens")
+                            .and_then(|raw| raw.parse().ok()),
+                        project.orchestrator.clone(),
+                        worktree_path,
+                    ))
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut state_changed = false;
+        for (slot_id, agent_id, total_tokens, token_budget, orchestrator, worktree_path) in checks {
+            let has_worktree_changes = orchestrator.has_worktree_changes(&worktree_path)?;
+            if let Some(finding) = self.loop_detector.check(
+                &slot_id,
+                agent_id.as_deref(),
+                LoopCheck {
+                    task_status: TaskStatus::Working,
+                    total_tokens,
+                    token_budget,
+                    has_worktree_changes,
+                },
+            ) {
+                self.handle_observer_finding(finding).await?;
+                state_changed = true;
+            }
+        }
+
+        if state_changed {
+            self.sync_snapshot().await;
+        }
+
+        Ok(())
+    }
+
     async fn merge_slot(&mut self, project_id: &str, slot_id: &str) -> Result<(), DaemonError> {
         let merge_details = self
             .merge_descriptor(slot_id)
@@ -1063,6 +1194,38 @@ impl DaemonEngine {
         Ok(())
     }
 
+    async fn handle_observer_finding(
+        &mut self,
+        finding: ObserverFinding,
+    ) -> Result<(), DaemonError> {
+        self.publish_event(observer_payload(&finding), None);
+
+        match finding.kind {
+            ObserverFindingKind::UncertaintySignal | ObserverFindingKind::SandboxViolation => {
+                if self.current_task_status(&finding.slot_id) == Some(TaskStatus::Working) {
+                    self.pause_slot(&finding.slot_id).await?;
+                }
+            }
+            ObserverFindingKind::LoopDetected
+            | ObserverFindingKind::Stuck
+            | ObserverFindingKind::BudgetVelocity => match finding.action {
+                Some(LoopAction::Pause) => {
+                    if self.current_task_status(&finding.slot_id) == Some(TaskStatus::Working) {
+                        self.pause_slot(&finding.slot_id).await?;
+                    }
+                }
+                Some(LoopAction::Kill) => {
+                    if self.current_task_status(&finding.slot_id) == Some(TaskStatus::Working) {
+                        self.kill_slot(&finding.slot_id, TaskStatus::Paused).await?;
+                    }
+                }
+                Some(LoopAction::Alert) | None => {}
+            },
+        }
+
+        Ok(())
+    }
+
     fn set_task_status(
         &mut self,
         slot_id: &str,
@@ -1094,6 +1257,10 @@ impl DaemonEngine {
         if let Some(slot) = self.slot_mut(slot_id) {
             slot.task_status = status;
         }
+        self.loop_detector.observe_status(slot_id, status);
+        if matches!(status, TaskStatus::Done | TaskStatus::Archived) {
+            self.sandbox_guard.remove_slot(slot_id);
+        }
         self.publish_event(
             hypervisor_event::Payload::TaskStatusChanged(TaskStatusChanged {
                 task_id: slot_id.to_string(),
@@ -1105,11 +1272,13 @@ impl DaemonEngine {
         Ok(())
     }
 
-    fn publish_event(&self, payload: hypervisor_event::Payload, barrier_id: Option<String>) {
+    fn publish_event(&mut self, payload: hypervisor_event::Payload, barrier_id: Option<String>) {
+        self.state.last_event_sequence = self.state.last_event_sequence.saturating_add(1);
         self.service.publish_event(HypervisorEvent {
             event_id: format!("event-{}", EVENT_COUNTER.fetch_add(1, Ordering::Relaxed)),
             timestamp_ms: now_ms(),
             barrier_id: barrier_id.unwrap_or_default(),
+            event_sequence: self.state.last_event_sequence,
             payload: Some(payload),
         });
     }
@@ -1268,6 +1437,7 @@ impl DaemonEngine {
 struct RuntimeState {
     session_budget_max_usd: f64,
     total_session_cost: f64,
+    last_event_sequence: u64,
     projects: BTreeMap<String, ProjectRuntime>,
     slot_project: BTreeMap<String, String>,
 }
@@ -1315,6 +1485,7 @@ impl RuntimeState {
         Ok(Self {
             session_budget_max_usd: session.session.budget.max_usd.unwrap_or_default(),
             total_session_cost: 0.0,
+            last_event_sequence: 0,
             projects,
             slot_project,
         })
@@ -1442,6 +1613,7 @@ impl RuntimeState {
                 .collect(),
             total_session_cost: self.total_session_cost,
             session_budget_max_usd: self.session_budget_max_usd,
+            last_event_sequence: self.last_event_sequence,
         }
     }
 }
@@ -1644,18 +1816,57 @@ fn next_barrier_id() -> String {
     )
 }
 
+fn observer_payload(finding: &ObserverFinding) -> hypervisor_event::Payload {
+    let detail = match finding.kind {
+        ObserverFindingKind::LoopDetected
+        | ObserverFindingKind::Stuck
+        | ObserverFindingKind::BudgetVelocity => {
+            observer_alert::Detail::LoopDetected(LoopDetected {
+                reason: finding.reason.clone(),
+                intervention: loop_action_to_proto(finding.action.unwrap_or(LoopAction::Alert))
+                    as i32,
+            })
+        }
+        ObserverFindingKind::SandboxViolation => {
+            observer_alert::Detail::SandboxViolation(SandboxViolation {
+                path: finding.path.clone().unwrap_or_default(),
+                reason: finding.reason.clone(),
+            })
+        }
+        ObserverFindingKind::UncertaintySignal => {
+            observer_alert::Detail::UncertaintySignal(UncertaintySignal {
+                reason: finding.reason.clone(),
+            })
+        }
+    };
+
+    hypervisor_event::Payload::ObserverAlert(ObserverAlert {
+        slot_id: finding.slot_id.clone(),
+        agent_id: finding.agent_id.clone().unwrap_or_default(),
+        detail: Some(detail),
+    })
+}
+
+fn loop_action_to_proto(action: LoopAction) -> ObserverIntervention {
+    match action {
+        LoopAction::Alert => ObserverIntervention::Alert,
+        LoopAction::Kill => ObserverIntervention::Kill,
+        LoopAction::Pause => ObserverIntervention::Pause,
+    }
+}
+
 fn is_valid_task_transition(current: TaskStatus, target: TaskStatus) -> bool {
     use TaskStatus::*;
 
-    match (current, target) {
-        (Pending, Working | Archived) => true,
-        (Working, Review | Paused | Archived) => true,
-        (Review, MergeQueue | Working | Paused) => true,
-        (MergeQueue, Done | Resolving | Paused) => true,
-        (Resolving, Done | Archived) => true,
-        (Paused, Working | MergeQueue) => true,
-        _ => false,
-    }
+    matches!(
+        (current, target),
+        (Pending, Working | Archived)
+            | (Working, Review | Paused | Archived)
+            | (Review, MergeQueue | Working | Paused)
+            | (MergeQueue, Done | Resolving | Paused)
+            | (Resolving, Done | Archived)
+            | (Paused, Working | MergeQueue)
+    )
 }
 
 fn format_task_status(status: TaskStatus) -> &'static str {
@@ -1680,11 +1891,14 @@ mod tests {
 
     use nexode_proto::hypervisor_client::HypervisorClient;
     use nexode_proto::hypervisor_server::Hypervisor;
+    use nexode_proto::observer_alert;
     use nexode_proto::{MoveTask, SlotDispatch};
     use tempfile::TempDir;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
+
+    use crate::observer::{LoopAction, LoopDetectionConfig};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn full_auto_slots_merge_through_fifo_queue() {
@@ -2005,6 +2219,8 @@ projects:
             wal,
             daemon_instance_id: "test-daemon".to_string(),
             state,
+            loop_detector: LoopDetector::new(LoopDetectionConfig::default()),
+            sandbox_guard: SandboxGuard::new(true),
         };
         if let Some(slot) = engine.slot_mut("slot-a") {
             slot.task_status = TaskStatus::Working;
@@ -2053,6 +2269,218 @@ projects:
 
         assert!(saw_swap);
         assert!(saw_executing);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn observer_loop_kill_stops_agent_and_pauses_slot() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "observer-loop"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "[[mock-loop]]"
+"#,
+        );
+
+        let mut config = fixture.config(session_path.clone());
+        config.observer.loop_detection.max_identical_outputs = 3;
+        config.observer.loop_detection.on_loop = LoopAction::Kill;
+
+        let (mut engine, service) = fixture.engine(session_path, config).await;
+        let mut stream = subscribe_events(&service).await;
+
+        engine.start_slot("slot-a").await.expect("start slot");
+        drive_engine_until(&mut engine, |engine| {
+            engine.current_task_status("slot-a") == Some(TaskStatus::Paused)
+        })
+        .await;
+
+        assert_eq!(
+            engine.current_task_status("slot-a"),
+            Some(TaskStatus::Paused)
+        );
+        assert!(
+            engine
+                .slot_mut("slot-a")
+                .expect("slot runtime")
+                .supervisor
+                .is_none()
+        );
+
+        let alert = next_observer_alert(&mut stream).await;
+        match alert.detail.expect("alert detail") {
+            observer_alert::Detail::LoopDetected(detail) => {
+                assert_eq!(alert.slot_id, "slot-a");
+                assert_eq!(detail.intervention, ObserverIntervention::Kill as i32);
+            }
+            other => panic!("expected loop alert, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn uncertainty_signal_pauses_slot_and_emits_alert() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "observer-uncertainty"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "[[mock-uncertain]]"
+"#,
+        );
+
+        let config = fixture.config(session_path.clone());
+        let (mut engine, service) = fixture.engine(session_path, config).await;
+        let mut stream = subscribe_events(&service).await;
+
+        engine.start_slot("slot-a").await.expect("start slot");
+        drive_engine_until(&mut engine, |engine| {
+            engine.current_task_status("slot-a") == Some(TaskStatus::Paused)
+        })
+        .await;
+
+        assert_eq!(
+            engine.current_task_status("slot-a"),
+            Some(TaskStatus::Paused)
+        );
+        let alert = next_observer_alert(&mut stream).await;
+        match alert.detail.expect("alert detail") {
+            observer_alert::Detail::UncertaintySignal(detail) => {
+                assert!(detail.reason.contains("DECISION:"));
+            }
+            other => panic!("expected uncertainty alert, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sandbox_violation_pauses_slot_before_merge() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "observer-sandbox"
+defaults:
+  model: "mock"
+  mode: "full_auto"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "[[mock-outside-write]]"
+"#,
+        );
+
+        let config = fixture.config(session_path.clone());
+        let (mut engine, service) = fixture.engine(session_path, config).await;
+        let mut stream = subscribe_events(&service).await;
+
+        engine.start_slot("slot-a").await.expect("start slot");
+        drive_engine_until(&mut engine, |engine| {
+            engine.current_task_status("slot-a") == Some(TaskStatus::Paused)
+        })
+        .await;
+
+        assert_eq!(
+            engine.current_task_status("slot-a"),
+            Some(TaskStatus::Paused)
+        );
+        let alert = next_observer_alert(&mut stream).await;
+        match alert.detail.expect("alert detail") {
+            observer_alert::Detail::SandboxViolation(detail) => {
+                assert_eq!(detail.path, "../../../etc/shadow");
+            }
+            other => panic!("expected sandbox alert, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn event_sequences_are_monotonic_and_snapshot_tracks_latest() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "event-sequence"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+        );
+
+        let config = fixture.config(session_path.clone());
+        let (mut engine, service) = fixture.engine(session_path, config).await;
+        let mut stream = subscribe_events(&service).await;
+
+        engine.publish_event(
+            hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
+                agent_id: "agent-1".to_string(),
+                new_state: AgentState::Executing as i32,
+                slot_id: "slot-a".to_string(),
+            }),
+            None,
+        );
+        engine.publish_event(
+            hypervisor_event::Payload::TaskStatusChanged(TaskStatusChanged {
+                task_id: "slot-a".to_string(),
+                new_status: TaskStatus::Working as i32,
+                agent_id: "agent-1".to_string(),
+            }),
+            None,
+        );
+        engine.sync_snapshot().await;
+
+        let first = timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("first event before timeout")
+            .expect("stream item")
+            .expect("event");
+        let second = timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("second event before timeout")
+            .expect("stream item")
+            .expect("event");
+        let snapshot = service.full_state().await;
+
+        assert_eq!(first.event_sequence, 1);
+        assert_eq!(second.event_sequence, 2);
+        assert_eq!(snapshot.last_event_sequence, 2);
     }
 
     async fn wait_for_all_tasks_done(
@@ -2105,6 +2533,56 @@ projects:
         })
         .await
         .expect("task reaches expected state")
+    }
+
+    async fn subscribe_events(
+        service: &HypervisorService,
+    ) -> <HypervisorService as Hypervisor>::SubscribeEventsStream {
+        Hypervisor::subscribe_events(
+            service,
+            tonic::Request::new(nexode_proto::SubscribeRequest {
+                client_version: "test-client".to_string(),
+            }),
+        )
+        .await
+        .expect("subscribe events")
+        .into_inner()
+    }
+
+    async fn next_observer_alert(
+        stream: &mut <HypervisorService as Hypervisor>::SubscribeEventsStream,
+    ) -> ObserverAlert {
+        timeout(Duration::from_secs(2), async {
+            loop {
+                let event = stream.next().await.expect("stream item").expect("event");
+                if let Some(hypervisor_event::Payload::ObserverAlert(alert)) = event.payload {
+                    return alert;
+                }
+            }
+        })
+        .await
+        .expect("observer alert before timeout")
+    }
+
+    async fn drive_engine_until<F>(engine: &mut DaemonEngine, mut done: F)
+    where
+        F: FnMut(&DaemonEngine) -> bool,
+    {
+        let deadline = time::Instant::now() + Duration::from_secs(3);
+        while !done(engine) {
+            if let Ok(Some(event)) =
+                timeout(Duration::from_millis(50), engine.process_rx.recv()).await
+            {
+                engine
+                    .handle_process_event(event)
+                    .await
+                    .expect("handle process event");
+            }
+            engine.run_observer_tick().await.expect("observer tick");
+            if time::Instant::now() >= deadline {
+                panic!("engine did not reach expected state");
+            }
+        }
     }
 
     struct DaemonFixture {
@@ -2160,6 +2638,40 @@ projects:
             config.verification_timeout = Duration::from_secs(5);
             config.accounting_db_path = self.root.join("token-accounting.sqlite3");
             config
+        }
+
+        async fn engine(
+            &self,
+            session_path: PathBuf,
+            config: DaemonConfig,
+        ) -> (DaemonEngine, HypervisorService) {
+            let session = load_session_config(&session_path).expect("load session");
+            let state = RuntimeState::from_session(session, config.verification_timeout)
+                .expect("create runtime state");
+            let bridge = GrpcBridge::new(state.snapshot());
+            let (service, command_rx) = bridge.into_parts();
+            let accounting = TokenAccountingHandle::start(self.root.join("engine-test.sqlite3"))
+                .expect("accounting");
+            let wal = Wal::open(self.root.join(".nexode/engine-test.wal")).expect("open wal");
+            let (process_tx, process_rx) = mpsc::unbounded_channel();
+
+            (
+                DaemonEngine {
+                    loop_detector: LoopDetector::new(config.observer.loop_detection.clone()),
+                    sandbox_guard: SandboxGuard::new(config.observer.sandbox_enforcement),
+                    config,
+                    service: service.clone(),
+                    command_rx,
+                    process_rx,
+                    process_tx,
+                    process_manager: AgentProcessManager::new(),
+                    accounting,
+                    wal,
+                    daemon_instance_id: "test-daemon".to_string(),
+                    state,
+                },
+                service,
+            )
         }
 
         async fn client(&self, addr: SocketAddr) -> HypervisorClient<tonic::transport::Channel> {

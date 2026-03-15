@@ -1,62 +1,51 @@
 ---
 agent: gpt
-status: ready
+status: handoff
 from: gpt
-timestamp: 2026-03-15T13:05:00-07:00
-task: "Pre-Sprint 3 — Codex CLI Live Verification"
-branch: "agent/gpt/codex-verify"
+timestamp: 2026-03-15T14:30:16-07:00
+task: "Sprint 3 — Observer Loops + Safety"
+branch: "agent/gpt/sprint-3-observer-safety"
+next: pc
 ---
 
-# Handoff: Codex Verification Ready For Review
+# Handoff: Sprint 3 Ready For PC Review
 
-## What This Sprint Delivers
+## What Landed
 
-Sprint 2 proves the daemon works with real CLI agents end-to-end. Three pillars:
+Sprint 3 adds the daemon safety layer required for unattended operation:
 
-1. **Bug fixes** — I-009, I-010, I-015 (issues that would cause silent failures with real agents)
-2. **Command acknowledgment** — R-007 (fire-and-forget → result-bearing response)
-3. **Live integration** — smoke tests with real `claude`/`codex` CLI, end-to-end demo
+1. **Loop detection**
+   - New `crates/nexode-daemon/src/observer.rs` with `LoopDetector`
+   - Detects repeated identical output, no-diff stalls, and optional budget-velocity stalls
+   - Supports configurable `on_loop` intervention: `alert`, `kill`, or `pause`
 
-## Key Documents
+2. **Sandbox enforcement**
+   - New `SandboxGuard` in `observer.rs`
+   - Canonical worktree root registered before spawn
+   - Output parser flags obvious escape attempts like `../../../etc/shadow`
+   - Post-run changed-path validation runs before a slot can move into review / merge
 
-| Document | Location | Purpose |
-|---|---|---|
-| Sprint instructions | `.agents/CODEX-SPRINT-2.md` | Full task breakdown for gpt agent |
-| Command ack architecture | `docs/architecture/command-ack.md` | R-007 design — oneshot pattern, proto changes |
-| Sprint 1 review | `docs/reviews/sprint-1-review.md` | Source of I-009, I-010, I-015 findings |
-| Issues registry | `ISSUES.md` | Full issue details with module/line references |
+3. **Reliable event sequencing**
+   - `HypervisorEvent.event_sequence`
+   - `FullStateSnapshot.last_event_sequence`
+   - `transport.rs` now surfaces lagged consumers as gRPC `DATA_LOSS`
+   - `nexode-ctl watch` warns on sequence gaps and refreshes state
 
-## Implemented
+4. **Uncertainty routing**
+   - New `ObserverAlert` proto event with `LoopDetected`, `SandboxViolation`, and `UncertaintySignal`
+   - Uncertainty markers in agent output now pause the slot and emit an alert
+   - Added `resume-slot` command path in `nexode-ctl`
 
-- **I-009 / `process.rs`**
-  - Non-zero agent exit now always resolves as failure.
-  - `AgentHarness` exposes `requires_completion_signal()`, so real harnesses require both zero exit and an explicit completion signal.
-  - Mock harness compatibility is preserved for existing tests and local workflow.
-- **I-010 / `engine.rs`**
-  - `SlotAgentSwapped` now also emits `AgentStateChanged(Executing)` for the replacement agent, keeping observers and UI in sync after respawn.
-- **I-015 / `harness.rs`**
-  - Claude and Codex completion detection now parses JSON instead of relying on brittle substring matching.
-- **R-007 command acknowledgment**
-  - `CommandResponse` now echoes `command_id` and returns a `CommandOutcome`.
-  - gRPC transport uses a oneshot request/response channel with timeout instead of fire-and-forget.
-  - Engine command handling validates slot existence and task-state transitions before responding.
-  - `nexode-ctl` surfaces actual command outcomes instead of always printing success.
-- **Live integration**
-  - Added gated `live-test` smoke tests for Claude and Codex harnesses.
-  - Added `scripts/demo.sh` for an end-to-end local demo flow.
-  - Fixed the Claude live harness contract so the daemon now requests JSON stream output, detects completion correctly, and records final usage/cost telemetry.
+## Primary Files
 
-## Key Decisions Captured In Code
-
-- Harnesses remain synchronous command builders plus line-oriented parsers. Process lifecycle, streaming, timeouts, and respawn logic stay in `process.rs`.
-- Live tests are feature-gated and self-skip when required CLI binaries or API keys are unavailable.
-- This environment verified the gated compile/self-skip path, not a credential-backed real CLI run.
-
-## Dependencies
-
-- `serde_json` crate (for I-015 fix)
-- `claude` CLI (for live tests — gated behind feature flag)
-- `codex` CLI (for live tests — gated behind feature flag)
+| Area | Files |
+|---|---|
+| Observer core | `crates/nexode-daemon/src/observer.rs` |
+| Engine integration | `crates/nexode-daemon/src/engine.rs` |
+| Transport / gap detection | `crates/nexode-daemon/src/transport.rs`, `crates/nexode-ctl/src/main.rs` |
+| Proto surface | `crates/nexode-proto/proto/hypervisor.proto` |
+| Worktree diff helpers | `crates/nexode-daemon/src/git.rs` |
+| Mock test behaviors | `crates/nexode-daemon/src/harness.rs` |
 
 ## Verification
 
@@ -64,48 +53,60 @@ Sprint 2 proves the daemon works with real CLI agents end-to-end. Three pillars:
 - `cargo test -p nexode-daemon`
 - `cargo test -p nexode-ctl`
 - `cargo check --workspace`
-- `ANTHROPIC_API_KEY= OPENAI_API_KEY= cargo test -p nexode-daemon --features live-test --test live_harness -- --nocapture`
-- `cargo test -p nexode-daemon --features live-test --test live_harness live_claude_code_hello_world -- --nocapture` with a real Claude API key
-- `cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` with a real Claude API key
-- `cargo test -p nexode-daemon --features live-test --test live_harness live_codex_cli_hello_world -- --nocapture` with a real Codex CLI + `OPENAI_API_KEY`
-- `unset ANTHROPIC_API_KEY && cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` to force Codex
-- `NEXODE_DEMO_HARNESS=codex-cli bash scripts/demo.sh`
+- `cargo clippy --workspace -- -D warnings`
+- Branch pushed to `origin/agent/gpt/sprint-3-observer-safety`
+- Review URL: `https://github.com/onelouder/nexode/pull/new/agent/gpt/sprint-3-observer-safety`
 
-## Remaining Review Focus
+Current test counts:
+- `nexode-daemon`: 58 passing tests
+- `nexode-ctl`: 4 passing tests
 
-- Demo polling still exits at `merge_queue` / pre-merge repo contents due known issue `I-019`.
-- Confirm the command-ack outcome surface is sufficient for planned UI/client behavior.
+## Reviewer Focus
 
-## Codex CLI Verification (Pre-Sprint 3)
+1. **Observer action semantics**
+   - `LoopAction::Kill` currently force-stops the running slot process and leaves the task in `PAUSED`
+   - This is intentional for operator recovery, but it is the main behavior choice to scrutinize
 
-- **Date:** 2026-03-15
-- **Agent:** gpt
-- **`codex` version:** `codex-cli 0.104.0-alpha.1`
-- **Model used:** Codex default model (no explicit `--model` flag)
+2. **Budget-velocity inference**
+   - There is still no first-class token-budget field in session config
+   - Sprint 3 uses `provider_config.max_context_tokens` as the optional baseline when present
+   - If absent, the budget-velocity check is inactive
 
-### Results
+3. **Proto/event surface**
+   - `AgentStateChanged.slot_id` was added while touching sequencing, resolving `I-017`
+   - `resume-slot` was added without removing the older agent-id command path
 
-| Test | Result | Notes |
-|---|---|---|
-| `live_codex_cli_hello_world` | ✅ | Passed after aligning completion detection to Codex's real `type: "turn.completed"` JSON output and using the CLI default model. |
-| `live_full_lifecycle` (Codex) | ✅ | Passed with `ANTHROPIC_API_KEY` unset to force Codex. `MoveTask -> MergeQueue` returned `Executed`, slot reached `DONE`. |
-| `scripts/demo.sh` (Codex) | ✅ | Ran successfully with `NEXODE_DEMO_HARNESS=codex-cli`; reached `REVIEW`, queued merge, then exited while final status still showed `merge_queue` due known `I-019`. |
+## Open / Not Changed
 
-### Observations
+- `I-016` task-transition semantics are still open
+- `I-018` telemetry double-count risk is still open
+- `I-019` demo polling still exits before guaranteed `DONE`
+- No live Claude/Codex verification was rerun in Sprint 3; all new safety coverage is mock-driven
 
-- In this environment, Codex success completion is emitted as `{"type":"turn.completed", ...}` rather than `{"event":"done"}` or `{"status":"completed"}`.
-- Successful Codex telemetry is emitted on the same `type: "turn.completed"` JSON line under `usage.input_tokens`, `usage.cached_input_tokens`, and `usage.output_tokens`.
-- The hard-coded Codex test/demo model `gpt-4.1` is not supported on this account.
-- Explicit `gpt-5` and `gpt-5-codex` model selection also failed here because the local Codex configuration injects `reasoning.effort = xhigh`, which those models reject.
-- Using Codex's default model path avoids both compatibility issues and works end-to-end.
+## Suggested Next Step
 
-## What NOT to Change
+- pc reviews `agent/gpt/sprint-3-observer-safety` against `.agents/prompts/sprint-3-codex.md`
+- If review is clean, open PR and merge
 
-- No observer loops — Sprint 3
-- No event sequence numbers (R-005) — Sprint 3
-- No engine decomposition — tracked but not blocking
-- No AGENTS.md, DECISIONS.md, docs/spec/*, docs/architecture/* modifications
+## PC Review Brief
 
-## Previous Sprint Summary
+Read first:
+- `AGENTS.md`
+- `PLAN_NOW.md`
+- `HANDOFF.md`
+- `.agents/prompts/sprint-3-codex.md`
+- `ISSUES.md`
 
-Sprint 1 delivered WAL recovery and agent harness. 35 tests, all passing. 10 findings from code review — 1 high (R-007, addressed this sprint), 3 medium (I-009, I-010 addressed this sprint; R-005 deferred), 6 low (deferred). See `docs/reviews/sprint-1-review.md`.
+Review focus:
+- `crates/nexode-daemon/src/observer.rs`
+- `crates/nexode-daemon/src/engine.rs`
+- `crates/nexode-daemon/src/transport.rs`
+- `crates/nexode-ctl/src/main.rs`
+- `crates/nexode-proto/proto/hypervisor.proto`
+
+Please verify:
+- loop intervention semantics, especially `LoopAction::Kill -> PAUSED`
+- sandbox output/path checks and whether any escape cases remain
+- event gap behavior for slow clients and `nexode-ctl watch`
+- uncertainty pause/resume flow
+- whether the `provider_config.max_context_tokens` inference for budget velocity is acceptable for Sprint 3

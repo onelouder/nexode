@@ -278,6 +278,24 @@ impl GitWorktreeOrchestrator {
         Ok(())
     }
 
+    pub fn has_worktree_changes(
+        &self,
+        worktree_path: impl AsRef<Path>,
+    ) -> Result<bool, GitWorktreeError> {
+        Ok(!self.changed_paths(worktree_path)?.is_empty())
+    }
+
+    pub fn changed_paths(
+        &self,
+        worktree_path: impl AsRef<Path>,
+    ) -> Result<Vec<PathBuf>, GitWorktreeError> {
+        let output = self.run_git(
+            worktree_path.as_ref(),
+            ["status", "--porcelain", "--untracked-files=all"],
+        )?;
+        Ok(parse_status_paths(&output.stdout))
+    }
+
     pub fn merge_and_verify(
         &self,
         worktree_path: impl AsRef<Path>,
@@ -597,6 +615,21 @@ fn read_stream(mut stream: Option<impl Read>, cwd: &Path) -> Result<String, GitW
     Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
+fn parse_status_paths(stdout: &str) -> Vec<PathBuf> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+
+            let path = &line[3..];
+            let path = path.rsplit(" -> ").next().unwrap_or(path).trim();
+            (!path.is_empty()).then(|| PathBuf::from(path))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,6 +708,28 @@ mod tests {
 
         let status = fixture.run_git(&worktree.path, ["status", "--short"]);
         assert!(status.stdout.trim().is_empty());
+    }
+
+    #[test]
+    fn reports_changed_paths_for_dirty_worktree() {
+        let fixture = GitFixture::new();
+        let orchestrator = fixture.orchestrator();
+        let worktree = orchestrator
+            .create_worktree("slot-a", "agent/slot-a", "main")
+            .expect("create worktree");
+
+        fs::write(worktree.path.join("new.txt"), "hello\n").expect("write file");
+
+        let paths = orchestrator
+            .changed_paths(&worktree.path)
+            .expect("changed paths");
+
+        assert!(paths.iter().any(|path| path == Path::new("new.txt")));
+        assert!(
+            orchestrator
+                .has_worktree_changes(&worktree.path)
+                .expect("has changes")
+        );
     }
 
     #[test]

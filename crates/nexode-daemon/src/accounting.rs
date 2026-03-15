@@ -247,26 +247,26 @@ impl TokenAccountant {
     ) -> Result<Option<ProjectBudgetAlert>, TokenAccountantError> {
         let totals = self.get_project_total(project_id)?;
 
-        if let Some(limit_usd) = budget.max_usd {
-            if totals.cost_usd >= limit_usd {
-                return Ok(Some(ProjectBudgetAlert {
-                    project_id: project_id.to_string(),
-                    current_usd: totals.cost_usd,
-                    limit_usd,
-                    hard_kill: true,
-                }));
-            }
+        if let Some(limit_usd) = budget.max_usd
+            && totals.cost_usd >= limit_usd
+        {
+            return Ok(Some(ProjectBudgetAlert {
+                project_id: project_id.to_string(),
+                current_usd: totals.cost_usd,
+                limit_usd,
+                hard_kill: true,
+            }));
         }
 
-        if let Some(limit_usd) = budget.warn_usd {
-            if totals.cost_usd >= limit_usd {
-                return Ok(Some(ProjectBudgetAlert {
-                    project_id: project_id.to_string(),
-                    current_usd: totals.cost_usd,
-                    limit_usd,
-                    hard_kill: false,
-                }));
-            }
+        if let Some(limit_usd) = budget.warn_usd
+            && totals.cost_usd >= limit_usd
+        {
+            return Ok(Some(ProjectBudgetAlert {
+                project_id: project_id.to_string(),
+                current_usd: totals.cost_usd,
+                limit_usd,
+                hard_kill: false,
+            }));
         }
 
         Ok(None)

@@ -98,14 +98,14 @@
 - **Mitigation:** Prefix with daemon instance ID (PID, UUID, or epoch timestamp) when moving to production.
 - **Addressed:** Sprint 1 (2026-03-15). `daemon_instance_id` (UUID v4 prefix) is now prepended to agent IDs via `next_agent_id(prefix, slot_id)`. Format: `{instance_short}-{slot_id}-agent-{counter}`.
 
-### R-005: Broadcast stream drops lagged events silently
+### ~~R-005: Broadcast stream drops lagged events silently~~ RESOLVED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** `transport.rs`
 - **Likelihood:** Medium (under load)
 - **Impact:** Medium (UI misses state transitions)
-- **Details:** `BroadcastStream` filters out `RecvError::Lagged` events. Under burst conditions (e.g., 10 agents finishing simultaneously), slow clients lose events with no indication. Acknowledged in code comments.
-- **Mitigation:** Add event sequence numbers. Implement replay or state catch-up for lagged clients in Phase 2+.
+- **Resolved:** Sprint 3 (2026-03-15), branch `agent/gpt/sprint-3-observer-safety`
+- **Resolution:** Event sequence numbers added to `HypervisorEvent` and `FullStateSnapshot`. `BroadcastStream` now surfaces `RecvError::Lagged` as gRPC `DATA_LOSS` instead of silently filtering. `nexode-ctl watch` detects sequence gaps and refreshes via `GetFullState`. End-to-end gap recovery verified in tests.
 
 ### R-006: `edition = "2024"` pins MSRV to Rust 1.85+
 
@@ -208,13 +208,13 @@
 - **Impact:** Could allow semantically wrong transitions (e.g., pause a REVIEW slot and resume to WORKING, bypassing re-review). Non-blocking for now since the daemon only pauses WORKING slots.
 - **When:** Before adding operator pause commands or UI pause controls.
 
-### I-017: `AgentStateChanged` proto missing `slot_id` field
+### ~~I-017: `AgentStateChanged` proto missing `slot_id` field~~ RESOLVED
 
 - **Source:** Sprint 2 review (2026-03-15), finding F-002
 - **Module:** `nexode.proto`, `AgentStateChanged` message
 - **Severity:** Low
-- **Details:** The `AgentStateChanged` proto message only has `agent_id` and `new_state`. TUI/extension subscribers who need to update a slot's visual state after a swap must correlate `agent_id` from `AgentStateChanged` with `new_agent_id` from the preceding `SlotAgentSwapped` event. If events arrive out of order or the swap event is missed, the UI can't determine which slot changed.
-- **When:** Phase 2/3 when TUI or VS Code extension consumes the event stream.
+- **Resolved:** Sprint 3 (2026-03-15), branch `agent/gpt/sprint-3-observer-safety`
+- **Resolution:** `slot_id` field (field 3) added to `AgentStateChanged` proto message. All engine event emissions now populate it.
 
 ### I-018: `parse_json_summary_telemetry` could double-count on multiple result lines
 
@@ -231,6 +231,46 @@
 - **Severity:** Low
 - **Details:** After sending `dispatch move-task slot-a merge-queue`, the script immediately prints status and exits. The merge happens asynchronously on the daemon's tick interval (2s), so "Final status" may still show `merge_queue` instead of `done`.
 - **When:** Minor cosmetic. Consider adding a wait loop for DONE after the MoveTask dispatch.
+
+### I-020: `observe_output` creates slot state for unknown/removed slots
+
+- **Source:** Sprint 3 review (2026-03-15), finding F-001
+- **Module:** `observer.rs:118`
+- **Severity:** Low
+- **Details:** `observe_output()` calls `self.slots.entry(slot_id).or_default()` unconditionally, creating a `SlotLoopState` even if `observe_status()` was never called for that slot. If output arrives for a slot that was already removed (e.g., due to a race between process event delivery and a status transition), the detector silently re-creates state for a dead slot.
+- **When:** Low urgency. Consider guarding with a slot-exists check when the observer is used at higher concurrency.
+
+### I-021: Alert-only loop findings suppress re-alerting permanently
+
+- **Source:** Sprint 3 review (2026-03-15), finding F-002
+- **Module:** `observer.rs:88-91`
+- **Severity:** Low
+- **Details:** Each `SlotLoopState` has `emitted_*_alert` flags. Once fired, the alert won't fire again unless the slot is reset (which only happens on pause/kill/resume). If `LoopAction::Alert` is configured (no intervention), the operator gets one alert and no follow-ups. An operator who sees an alert and doesn't act gets no second warning.
+- **When:** When `LoopAction::Alert` is the configured intervention. Consider a configurable alert cooldown.
+
+### I-022: `run_observer_tick` runs blocking git-status in async context
+
+- **Source:** Sprint 3 review (2026-03-15), finding F-003
+- **Module:** `engine.rs:1042-1097`
+- **Severity:** Low
+- **Details:** The observer tick calls `orchestrator.has_worktree_changes()` (which runs `git status --porcelain` via `std::process::Command`) synchronously for every working slot on each tick. At scale (10-15 agents), this blocks the tokio runtime for multiple subprocess invocations every 2 seconds.
+- **When:** Phase 2+ when slot counts grow. Apply the existing `spawn_blocking` pattern used in merge operations.
+
+### I-023: `candidate_paths` may false-positive on URLs and source locations
+
+- **Source:** Sprint 3 review (2026-03-15), finding F-004
+- **Module:** `observer.rs:341-353`
+- **Severity:** Low
+- **Details:** The path candidate extraction matches any whitespace-delimited token containing `/` or `\`. This matches URLs (`https://...`), Rust source locations (`src/lib.rs:42:`), MIME types (`application/json`), etc. Most false positives are harmless because they resolve inside the worktree, but an absolute path appearing in agent log output (e.g., `/etc/passwd` in an error message) would trigger a sandbox violation.
+- **When:** Low urgency. The current behavior is conservative (false pause > false pass). Consider filtering URLs and source-location patterns.
+
+### I-024: `LoopDetected` proto flattens three distinct observer finding kinds
+
+- **Source:** Sprint 3 review (2026-03-15), finding F-006
+- **Module:** `engine.rs:1825-1833`, `hypervisor.proto`
+- **Severity:** Low
+- **Details:** `ObserverFindingKind::LoopDetected`, `Stuck`, and `BudgetVelocity` all map to the same proto variant `observer_alert::Detail::LoopDetected`. A UI client can't switch on the finding kind without parsing the `reason` string.
+- **When:** Phase 2/3 when building TUI or VS Code extension. Consider adding a `finding_kind` enum to the proto message or splitting into three variants.
 
 ---
 

@@ -105,25 +105,24 @@ pub fn recover_from_wal(
 
     let mut restart_slots = Vec::new();
     for (project_id, project) in &mut state.projects {
-        if let Some(inflight_slot) = project.merge_inflight_slot.take() {
-            if !project
+        if let Some(inflight_slot) = project.merge_inflight_slot.take()
+            && !project
                 .merge_queue
                 .iter()
                 .any(|slot_id| slot_id == &inflight_slot)
-            {
-                project.merge_queue.push_front(inflight_slot);
-            }
+        {
+            project.merge_queue.push_front(inflight_slot);
         }
 
         for (slot_id, slot) in &mut project.slots {
-            if let Some(path) = slot.worktree_path.as_ref() {
-                if !Path::new(path).exists() {
-                    warnings.push(format!(
-                        "worktree `{}` for slot `{slot_id}` is missing; clearing reference",
-                        path
-                    ));
-                    slot.worktree_path = None;
-                }
+            if let Some(path) = slot.worktree_path.as_ref()
+                && !Path::new(path).exists()
+            {
+                warnings.push(format!(
+                    "worktree `{}` for slot `{slot_id}` is missing; clearing reference",
+                    path
+                ));
+                slot.worktree_path = None;
             }
 
             let should_restart =

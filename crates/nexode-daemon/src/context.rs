@@ -138,16 +138,16 @@ fn truncate_payload(payload: &mut ContextPayload, max_bytes: usize) {
         return;
     }
 
-    if let Some(diff) = payload.recent_diff.as_mut() {
-        if diff.len() > max_bytes {
-            diff.truncate(max_bytes);
-        }
+    if let Some(diff) = payload.recent_diff.as_mut()
+        && diff.len() > max_bytes
+    {
+        diff.truncate(max_bytes);
     }
 
-    if let Some(readme) = payload.project_readme.as_mut() {
-        if readme.len() > max_bytes {
-            readme.truncate(max_bytes);
-        }
+    if let Some(readme) = payload.project_readme.as_mut()
+        && readme.len() > max_bytes
+    {
+        readme.truncate(max_bytes);
     }
 }
 

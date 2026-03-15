@@ -10,6 +10,7 @@ use nexode_proto::{
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::wrappers::{BroadcastStream, TcpListenerStream};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -45,8 +46,12 @@ type EventStream =
 
 impl GrpcBridge {
     pub fn new(initial_state: FullStateSnapshot) -> Self {
+        Self::with_event_buffer(initial_state, 256)
+    }
+
+    pub fn with_event_buffer(initial_state: FullStateSnapshot, event_buffer: usize) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (event_tx, _) = broadcast::channel(256);
+        let (event_tx, _) = broadcast::channel(event_buffer);
 
         let service = HypervisorService {
             inner: Arc::new(Inner {
@@ -104,14 +109,15 @@ impl Hypervisor for HypervisorService {
         &self,
         _request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeEventsStream>, Status> {
-        let stream = BroadcastStream::new(self.inner.event_tx.subscribe()).filter_map(|result| {
-            match result {
-                Ok(event) => Some(Ok(event)),
-                // For the skeleton, dropping lagged events is acceptable; later phases can add
-                // replay/state catch-up if the UI needs stronger guarantees.
-                Err(_) => None,
-            }
-        });
+        let stream =
+            BroadcastStream::new(self.inner.event_tx.subscribe()).filter_map(
+                |result| match result {
+                    Ok(event) => Some(Ok(event)),
+                    Err(BroadcastStreamRecvError::Lagged(skipped)) => Some(Err(Status::data_loss(
+                        format!("event stream lagged by {skipped} messages"),
+                    ))),
+                },
+            );
 
         Ok(Response::new(Box::pin(stream)))
     }
@@ -198,6 +204,7 @@ mod tests {
             task_dag: Vec::new(),
             total_session_cost: 1.5,
             session_budget_max_usd: 50.0,
+            last_event_sequence: 0,
         })
         .await;
 
@@ -295,10 +302,12 @@ mod tests {
             event_id: "event-1".to_string(),
             timestamp_ms: 1234,
             barrier_id: "barrier-1".to_string(),
+            event_sequence: 1,
             payload: Some(hypervisor_event::Payload::AgentStateChanged(
                 AgentStateChanged {
                     agent_id: "agent-1".to_string(),
                     new_state: AgentState::Executing as i32,
+                    slot_id: "slot-1".to_string(),
                 },
             )),
         });
@@ -310,14 +319,50 @@ mod tests {
             .expect("event payload");
 
         assert_eq!(event.event_id, "event-1");
+        assert_eq!(event.event_sequence, 1);
         assert!(matches!(
             event.payload,
             Some(hypervisor_event::Payload::AgentStateChanged(payload))
-                if payload.agent_id == "agent-1" && payload.new_state == AgentState::Executing as i32
+                if payload.agent_id == "agent-1"
+                    && payload.slot_id == "slot-1"
+                    && payload.new_state == AgentState::Executing as i32
         ));
 
         drop(stream);
         drop(client);
+        harness.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn subscribe_events_reports_lagged_consumers() {
+        let harness = GrpcHarness::with_event_buffer(FullStateSnapshot::default(), 4).await;
+        let mut client = harness.client().await;
+
+        let mut stream = client
+            .subscribe_events(Request::new(SubscribeRequest {
+                client_version: "test-client".to_string(),
+            }))
+            .await
+            .expect("subscribe events")
+            .into_inner();
+
+        for sequence in 1..=8 {
+            harness.service.publish_event(HypervisorEvent {
+                event_id: format!("event-{sequence}"),
+                timestamp_ms: sequence,
+                barrier_id: String::new(),
+                event_sequence: sequence,
+                payload: None,
+            });
+        }
+
+        let error = stream
+            .message()
+            .await
+            .expect_err("lagged stream should surface data loss");
+        assert_eq!(error.code(), tonic::Code::DataLoss);
+        assert!(error.message().contains("lagged"));
+
         harness.shutdown().await;
     }
 
@@ -331,7 +376,11 @@ mod tests {
 
     impl GrpcHarness {
         async fn new(initial_state: FullStateSnapshot) -> Self {
-            let bridge = GrpcBridge::new(initial_state);
+            Self::with_event_buffer(initial_state, 256).await
+        }
+
+        async fn with_event_buffer(initial_state: FullStateSnapshot, event_buffer: usize) -> Self {
+            let bridge = GrpcBridge::with_event_buffer(initial_state, event_buffer);
             let (service, command_rx) = bridge.into_parts();
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await

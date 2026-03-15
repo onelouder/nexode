@@ -109,6 +109,22 @@ impl AgentHarness for MockHarness {
         _context: &ContextPayload,
         _config: &HarnessConfig,
     ) -> Result<AgentCommand, HarnessError> {
+        if task.contains("[[mock-loop]]") {
+            return Ok(AgentCommand::shell(
+                "set -eu\nwhile true; do echo \"write src/lib.rs\"; sleep 0.05; done\n",
+            ));
+        }
+        if task.contains("[[mock-uncertain]]") {
+            return Ok(AgentCommand::shell(
+                "set -eu\necho \"DECISION: need guidance\"\nsleep 30\n",
+            ));
+        }
+        if task.contains("[[mock-outside-write]]") {
+            return Ok(AgentCommand::shell(
+                "set -eu\necho \"writing ../../../etc/shadow\"\nsleep 30\n",
+            ));
+        }
+
         let slot_id = worktree_path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())

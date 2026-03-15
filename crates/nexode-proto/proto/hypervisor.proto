@@ -103,12 +103,14 @@ message FullStateSnapshot {
   repeated TaskNode task_dag = 2;
   double total_session_cost = 3;
   double session_budget_max_usd = 4;
+  uint64 last_event_sequence = 5;
 }
 
 message HypervisorEvent {
   string event_id = 1;
   uint64 timestamp_ms = 2;
   string barrier_id = 3;
+  uint64 event_sequence = 11;
 
   oneof payload {
     AgentStateChanged agent_state_changed = 4;
@@ -118,12 +120,14 @@ message HypervisorEvent {
     WorktreeStatusChanged worktree_status_changed = 8;
     ProjectBudgetAlert project_budget_alert = 9;
     SlotAgentSwapped slot_agent_swapped = 10;
+    ObserverAlert observer_alert = 12;
   }
 }
 
 message AgentStateChanged {
   string agent_id = 1;
   AgentState new_state = 2;
+  string slot_id = 3;
 }
 
 message AgentTelemetryUpdated {
@@ -163,6 +167,38 @@ message SlotAgentSwapped {
   string reason = 4;
 }
 
+enum ObserverIntervention {
+  OBSERVER_INTERVENTION_UNSPECIFIED = 0;
+  OBSERVER_INTERVENTION_ALERT = 1;
+  OBSERVER_INTERVENTION_KILL = 2;
+  OBSERVER_INTERVENTION_PAUSE = 3;
+}
+
+message ObserverAlert {
+  string slot_id = 1;
+  string agent_id = 2;
+
+  oneof detail {
+    LoopDetected loop_detected = 3;
+    SandboxViolation sandbox_violation = 4;
+    UncertaintySignal uncertainty_signal = 5;
+  }
+}
+
+message LoopDetected {
+  string reason = 1;
+  ObserverIntervention intervention = 2;
+}
+
+message SandboxViolation {
+  string path = 1;
+  string reason = 2;
+}
+
+message UncertaintySignal {
+  string reason = 1;
+}
+
 message OperatorCommand {
   string command_id = 1;
 
@@ -176,6 +212,7 @@ message OperatorCommand {
     ChatDispatch chat_dispatch = 8;
     KillProject kill_project = 9;
     SlotDispatch slot_dispatch = 10;
+    ResumeSlot resume_slot = 11;
   }
 }
 
@@ -217,6 +254,11 @@ message KillProject {
 message SlotDispatch {
   string slot_id = 1;
   string raw_nl = 2;
+}
+
+message ResumeSlot {
+  string slot_id = 1;
+  string instruction = 2;
 }
 
 message CommandResponse {

@@ -289,7 +289,7 @@ fn merge_slot(
     Ok(SlotRaw {
         id: base.id.clone(),
         task: overlay
-            .and_then(|slot| Some(slot.task.clone()))
+            .map(|slot| slot.task.clone())
             .unwrap_or_else(|| base.task.clone()),
         model: overlay
             .and_then(|slot| slot.model.clone())
@@ -514,12 +514,12 @@ fn resolve_budget(
         .and_then(|raw| raw.warn_usd)
         .or_else(|| max_usd.map(|value| value * 0.8));
 
-    if let (Some(warn), Some(max)) = (warn_usd, max_usd) {
-        if warn > max {
-            return Err(SessionConfigError::Validation(format!(
-                "{label} warn_usd ({warn}) cannot exceed max_usd ({max})"
-            )));
-        }
+    if let (Some(warn), Some(max)) = (warn_usd, max_usd)
+        && warn > max
+    {
+        return Err(SessionConfigError::Validation(format!(
+            "{label} warn_usd ({warn}) cannot exceed max_usd ({max})"
+        )));
     }
 
     Ok(BudgetConfig { max_usd, warn_usd })
@@ -814,6 +814,7 @@ struct ModelPricingRaw {
     cache_read_per_1m: Option<f64>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum ProjectEntryRaw {
     Include(IncludeRaw),

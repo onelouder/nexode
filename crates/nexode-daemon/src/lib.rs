@@ -3,6 +3,7 @@ pub mod context;
 pub mod engine;
 pub mod git;
 pub mod harness;
+pub mod observer;
 pub mod process;
 pub mod recovery;
 pub mod session;

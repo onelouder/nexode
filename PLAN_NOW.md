@@ -7,50 +7,47 @@
 
 - **Goal:** Sprint 3 — Observer Loops + Safety
 - **Deadline:** 2026-03-29
-- **Active Agent:** gpt (next turn)
-- **Previous sprint:** Codex CLI Verification (complete, merged to main)
+- **Active Agent:** pc (review)
+- **Current Branch:** `agent/gpt/sprint-3-observer-safety`
+- **Previous sprint:** Sprint 2 real-agent integration + Codex verification (complete, merged to `main`)
 
 ## Tasks
 
-### Part 1: Loop Detection (do first)
+### Part 1: Loop Detection
 
-- [ ] Add `observer.rs` module with `LoopDetector` struct
-- [ ] Implement repeated-output detection (3+ identical output patterns per slot)
-- [ ] Implement stuck-timeout detection (configurable, no git diff progress after N minutes)
-- [ ] Implement budget-velocity check (>50% tokens consumed with zero worktree changes)
-- [ ] Add `ObserverAlert` event emission on loop detection
-- [ ] Add configurable action: `on_loop: alert | kill | pause`
-- [ ] Add `loop_detection` config block to `DaemonConfig`
-- [ ] Unit tests: identical outputs → alert, varied outputs → no alert, kill action → agent killed
-- [ ] Integration test: mock looping agent → daemon detects and alerts
+- [x] Add `observer.rs` module with `LoopDetector`
+- [x] Detect repeated identical output patterns per slot
+- [x] Detect stuck slots after configurable no-diff timeout
+- [x] Detect budget-velocity stalls when an optional token budget is configured
+- [x] Emit `ObserverAlert` loop events with configurable action (`alert | kill | pause`)
+- [x] Wire observer checks into the daemon tick loop and slot lifecycle
+- [x] Add unit and engine-level tests for loop alerts and kill/pause intervention
 
 ### Part 2: Sandbox Enforcement
 
-- [ ] Add `SandboxGuard` to `observer.rs`
-- [ ] Resolve worktree canonical path before agent spawn
-- [ ] Monitor agent output for file write patterns outside worktree root
-- [ ] Post-completion `git diff --name-only` check for path escapes
-- [ ] Add `sandbox_enforcement: bool` to `DaemonConfig` (default `true`)
-- [ ] Unit tests: path inside → allowed, path outside → flagged
-- [ ] Integration test: mock agent writes outside worktree → merge blocked
+- [x] Add `SandboxGuard` to `observer.rs`
+- [x] Canonicalize worktree roots before spawn and register them with the guard
+- [x] Parse output lines for attempted writes outside the assigned worktree
+- [x] Validate post-run changed paths before review/merge
+- [x] Add `sandbox_enforcement: bool` to `DaemonConfig`
+- [x] Add unit and engine-level sandbox tests
 
 ### Part 3: Event Sequence Numbers (R-005)
 
-- [ ] Add monotonic `event_sequence: u64` to `DaemonEvent` proto (or envelope wrapper)
-- [ ] Engine increments counter on every event emit
-- [ ] Add `last_event_sequence` field to `FullStateSnapshot`
-- [ ] Update `nexode-ctl watch` to print warning on sequence gap
-- [ ] Unit tests: sequence is monotonically increasing, snapshot includes latest sequence
-- [ ] Integration test: slow consumer detects gap and requests state refresh
+- [x] Add monotonic `event_sequence` to `HypervisorEvent`
+- [x] Add `last_event_sequence` to `FullStateSnapshot`
+- [x] Increment sequence numbers on every emitted daemon event
+- [x] Surface lagged broadcast consumers as gRPC `DATA_LOSS`
+- [x] Update `nexode-ctl watch` to warn and refresh on sequence gaps
+- [x] Add transport and engine tests for event sequencing / lag detection
 
 ### Part 4: Uncertainty Routing
 
-- [ ] Add `UncertaintySignal` variant to `ObserverAlert`
-- [ ] Parse agent output for uncertainty markers ("I'm not sure", "DECISION:", etc.)
-- [ ] On uncertainty signal: transition slot to PAUSED, emit alert event
-- [ ] Support `nexode-ctl dispatch resume-slot <slot-id>` with optional instruction
-- [ ] Unit tests: "DECISION:" in output → uncertainty signal → slot paused
-- [ ] Integration test: mock agent writes "DECISION: need guidance" → slot transitions to PAUSED
+- [x] Add `UncertaintySignal` under `ObserverAlert`
+- [x] Parse uncertainty markers from agent output (`I'm not sure`, `I need clarification`, `DECISION:`)
+- [x] Pause the slot on uncertainty and emit an operator-facing alert
+- [x] Add `nexode-ctl dispatch resume-slot <slot-id> [instruction...]`
+- [x] Add unit and engine-level uncertainty tests
 
 ## Blocked
 
@@ -58,20 +55,23 @@
 
 ## Done This Sprint
 
-- (Sprint 3 not yet started by Codex)
+- Added the new observer layer in `crates/nexode-daemon/src/observer.rs`
+- Integrated loop detection, uncertainty routing, and sandbox enforcement into `engine.rs`
+- Added worktree dirtiness helpers in `git.rs`
+- Extended the proto surface with `ObserverAlert`, `ResumeSlot`, `event_sequence`, `last_event_sequence`, and `AgentStateChanged.slot_id`
+- Updated gRPC transport and `nexode-ctl watch` for event-gap detection and snapshot refresh
+- Added Sprint 3 unit/integration coverage and cleaned up existing style issues so `cargo clippy --workspace -- -D warnings` passes
 
 ## Next Up
 
-- pc reviews Sprint 3 code after Codex completes
-- Sprint 4 planning
+- pc reviews `agent/gpt/sprint-3-observer-safety`
+- After review: open PR, merge, and decide whether any follow-up is needed for unresolved non-sprint issues (`I-016`, `I-018`, `I-019`)
 
 ## Notes
 
-- Sprint 3 Codex prompt: `.agents/prompts/sprint-3-codex.md`
-- All Phase 0 + Sprint 1 + Sprint 2 decisions remain binding
-- Open issues: see `ISSUES.md` — I-004, I-005, I-007, I-008, I-011–I-014, I-016–I-019
-- Open risks: R-001–R-003, R-005, R-006, R-008–R-010
-- R-005 (broadcast stream drops) is directly addressed by Part 3 of this sprint
-- R-008, R-009, R-010 are newly documented risks from Gemini architectural analysis
-- Live tests gated behind `--features live-test` — require `claude` or `codex` CLI installed
+- Sprint 3 prompt: `.agents/prompts/sprint-3-codex.md`
+- `LoopDetector` uses `provider_config.max_context_tokens` as the optional token-budget baseline when present; the budget-velocity check is otherwise inactive
+- `nexode-ctl` now has both `resume-agent` (legacy) and `resume-slot` (observer/operator flow)
+- `AgentStateChanged.slot_id` was added while touching the proto/event stream, resolving the low-priority consumer ambiguity tracked as `I-017`
+- Live CLI verification was not rerun in Sprint 3; all new coverage uses mock harness flows
 - Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`
