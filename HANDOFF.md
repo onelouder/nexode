@@ -1,112 +1,71 @@
 ---
-agent: gpt
+agent: pc
 status: handoff
-from: gpt
-timestamp: 2026-03-15T14:30:16-07:00
-task: "Sprint 3 — Observer Loops + Safety"
-branch: "agent/gpt/sprint-3-observer-safety"
-next: pc
+from: pc
+timestamp: 2026-03-15T16:42:00-07:00
+task: "Sprint 4 — Engine Hardening + Module Decomposition"
+branch: "main"
+next: gpt
 ---
 
-# Handoff: Sprint 3 Ready For PC Review
+# Handoff: Sprint 4 Ready for Codex
 
-## What Landed
+## What Just Happened
 
-Sprint 3 adds the daemon safety layer required for unattended operation:
+Sprint 3 (Observer Loops + Safety) was reviewed, rebased onto latest `origin/main`, and merged via squash merge. Merge commit: `9371feb`.
 
-1. **Loop detection**
-   - New `crates/nexode-daemon/src/observer.rs` with `LoopDetector`
-   - Detects repeated identical output, no-diff stalls, and optional budget-velocity stalls
-   - Supports configurable `on_loop` intervention: `alert`, `kill`, or `pause`
+Post-merge state:
+- 62 tests passing (58 daemon + 4 ctl)
+- `cargo fmt`, `cargo check`, `cargo clippy` all clean
+- All 5 Sprint 3 exit criteria met
+- Issues I-020 through I-024 added to ISSUES.md (all Low, non-blocking)
+- I-017 and R-005 resolved
 
-2. **Sandbox enforcement**
-   - New `SandboxGuard` in `observer.rs`
-   - Canonical worktree root registered before spawn
-   - Output parser flags obvious escape attempts like `../../../etc/shadow`
-   - Post-run changed-path validation runs before a slot can move into review / merge
+## Sprint 4 Scope
 
-3. **Reliable event sequencing**
-   - `HypervisorEvent.event_sequence`
-   - `FullStateSnapshot.last_event_sequence`
-   - `transport.rs` now surfaces lagged consumers as gRPC `DATA_LOSS`
-   - `nexode-ctl watch` warns on sequence gaps and refreshes state
+Sprint 4 is a hardening sprint before Phase 2 (TUI + VS Code extension). Four deliverables:
 
-4. **Uncertainty routing**
-   - New `ObserverAlert` proto event with `LoopDetected`, `SandboxViolation`, and `UncertaintySignal`
-   - Uncertainty markers in agent output now pause the slot and emit an alert
-   - Added `resume-slot` command path in `nexode-ctl`
+1. **Engine module decomposition** — split `engine.rs` (~2700 lines) into an `engine/` directory with focused sub-modules (config, runtime, commands, slots, merge, events, tests). Pure refactor, zero behavior changes.
 
-## Primary Files
+2. **Fix I-016** — `is_valid_task_transition` diverges from the Kanban state machine spec. Add `pre_pause_status` tracking so resume transitions are validated against the slot's pre-pause state.
 
-| Area | Files |
-|---|---|
-| Observer core | `crates/nexode-daemon/src/observer.rs` |
-| Engine integration | `crates/nexode-daemon/src/engine.rs` |
-| Transport / gap detection | `crates/nexode-daemon/src/transport.rs`, `crates/nexode-ctl/src/main.rs` |
-| Proto surface | `crates/nexode-proto/proto/hypervisor.proto` |
-| Worktree diff helpers | `crates/nexode-daemon/src/git.rs` |
-| Mock test behaviors | `crates/nexode-daemon/src/harness.rs` |
+3. **Fix I-022** — Observer tick runs blocking `git status` synchronously in the async engine loop. Wrap in `spawn_blocking` following the existing pattern from merge operations.
 
-## Verification
+4. **Fix I-008** — Daemon `main.rs` uses manual arg parsing. Replace with `clap` derive macros (matching `nexode-ctl` patterns). Adds `--help` and `--version`.
 
-- `cargo fmt --all`
-- `cargo test -p nexode-daemon`
-- `cargo test -p nexode-ctl`
-- `cargo check --workspace`
-- `cargo clippy --workspace -- -D warnings`
-- Branch pushed to `origin/agent/gpt/sprint-3-observer-safety`
-- Review URL: `https://github.com/onelouder/nexode/pull/new/agent/gpt/sprint-3-observer-safety`
+## Sprint 4 Prompt
 
-Current test counts:
-- `nexode-daemon`: 58 passing tests
-- `nexode-ctl`: 4 passing tests
+`.agents/prompts/sprint-4-codex.md`
 
-## Reviewer Focus
+## Read First
 
-1. **Observer action semantics**
-   - `LoopAction::Kill` currently force-stops the running slot process and leaves the task in `PAUSED`
-   - This is intentional for operator recovery, but it is the main behavior choice to scrutinize
-
-2. **Budget-velocity inference**
-   - There is still no first-class token-budget field in session config
-   - Sprint 3 uses `provider_config.max_context_tokens` as the optional baseline when present
-   - If absent, the budget-velocity check is inactive
-
-3. **Proto/event surface**
-   - `AgentStateChanged.slot_id` was added while touching sequencing, resolving `I-017`
-   - `resume-slot` was added without removing the older agent-id command path
-
-## Open / Not Changed
-
-- `I-016` task-transition semantics are still open
-- `I-018` telemetry double-count risk is still open
-- `I-019` demo polling still exits before guaranteed `DONE`
-- No live Claude/Codex verification was rerun in Sprint 3; all new safety coverage is mock-driven
-
-## Suggested Next Step
-
-- pc reviews `agent/gpt/sprint-3-observer-safety` against `.agents/prompts/sprint-3-codex.md`
-- If review is clean, open PR and merge
-
-## PC Review Brief
-
-Read first:
 - `AGENTS.md`
+- `.agents/openai.md`
+- `HANDOFF.md` (this file)
 - `PLAN_NOW.md`
-- `HANDOFF.md`
-- `.agents/prompts/sprint-3-codex.md`
-- `ISSUES.md`
+- `ISSUES.md` — focus on I-016, I-022, I-008
+- `DECISIONS.md`
+- `docs/architecture/kanban-state-machine.md` — needed for I-016 fix
+- `.agents/prompts/sprint-4-codex.md` — full sprint instructions
 
-Review focus:
-- `crates/nexode-daemon/src/observer.rs`
-- `crates/nexode-daemon/src/engine.rs`
-- `crates/nexode-daemon/src/transport.rs`
-- `crates/nexode-ctl/src/main.rs`
-- `crates/nexode-proto/proto/hypervisor.proto`
+## Context for Codex
 
-Please verify:
-- loop intervention semantics, especially `LoopAction::Kill -> PAUSED`
-- sandbox output/path checks and whether any escape cases remain
-- event gap behavior for slow clients and `nexode-ctl watch`
-- uncertainty pause/resume flow
-- whether the `provider_config.max_context_tokens` inference for budget velocity is acceptable for Sprint 3
+### engine.rs Structure
+
+The file contains everything: `DaemonConfig`, `DaemonEngine`, `RuntimeState`, `ProjectRuntime`, `SlotRuntime`, `SlotDescriptor`, `MergeDescriptor`, all command handlers, event handlers, tick loop, observer integration, merge queue, slot lifecycle, helpers, and integration tests. See the sprint prompt for a suggested module decomposition.
+
+### I-016 Details
+
+Two divergences from `docs/architecture/kanban-state-machine.md`:
+1. `MergeQueue → Paused` is allowed in code but not in the spec
+2. `Paused → Working` and `Paused → MergeQueue` are allowed unconditionally, but the spec requires knowing the pre-pause state
+
+The fix needs a `pre_pause_status` field on the slot runtime. The observer's `LoopAction::Pause` only pauses WORKING slots, so it should work correctly with pre-pause tracking.
+
+### I-022 Details
+
+`run_observer_tick` in `engine.rs` calls `has_worktree_changes()` (which shells out to `git status --porcelain`) synchronously for every working slot per tick. Apply the `spawn_blocking` pattern already used in merge operations.
+
+### Commit Strategy
+
+Commit Part 1 (decomposition) separately before Parts 2-4. This lets the pure refactor be reviewed independently from behavioral changes.

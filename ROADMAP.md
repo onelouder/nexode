@@ -57,16 +57,28 @@
   - [x] Default model path for Codex (no `--model` flag when `"default"`)
   - [x] Demo script with `codex-cli` harness
 
-### M2c: Sprint 3 — Observer Loops + Safety 🔄
+### M2c: Sprint 3 — Observer Loops + Safety ✅
 - **Target:** 2026-03-29
-- **Status:** In Progress
+- **Status:** Complete (merged 2026-03-15, commit `9371feb`)
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-3-codex.md`
+- **Review:** `docs/reviews/sprint-3-review.md`
 - **Deliverables:**
-  - [ ] Loop detection (`LoopDetector` in `observer.rs` — repeated output, stuck timeout, budget velocity)
-  - [ ] Sandbox enforcement (`SandboxGuard` — worktree boundary checks, symlink escape prevention)
-  - [ ] Event sequence numbers (R-005 fix — monotonic counter, gap detection, state catch-up)
-  - [ ] Uncertainty routing (agent "I'm stuck" detection, auto-pause, operator resume)
+  - [x] Loop detection (`LoopDetector` in `observer.rs` — repeated output, stuck timeout, budget velocity)
+  - [x] Sandbox enforcement (`SandboxGuard` — worktree boundary checks, symlink escape prevention)
+  - [x] Event sequence numbers (R-005 fix — monotonic counter, gap detection, state catch-up)
+  - [x] Uncertainty routing (agent "I'm stuck" detection, auto-pause, operator resume)
+
+### M2d: Sprint 4 — Engine Hardening + Module Decomposition 🔄
+- **Target:** 2026-03-29
+- **Status:** Ready for Codex
+- **Agent:** gpt (Codex)
+- **Prompt:** `.agents/prompts/sprint-4-codex.md`
+- **Deliverables:**
+  - [ ] Engine module decomposition (`engine.rs` → `engine/` directory with focused sub-modules)
+  - [ ] Fix I-016: Task transition semantics (pre-pause state tracking)
+  - [ ] Fix I-022: Async observer tick (`spawn_blocking` for git-status calls)
+  - [ ] Fix I-008: Daemon CLI with clap (replace manual arg parsing)
 
 ### M3: Phase 2 — TUI + VS Code Extension ⏳
 - **Target:** TBD
@@ -102,8 +114,8 @@
 - [ ] `provider_config` deep merge for session cascade (I-004)
 - [ ] SQLite schema migration versioning (I-005)
 - [ ] Merge queue immediate drain on event (I-007)
-- [ ] Replace manual arg parsing with clap (I-008)
-- [ ] Engine module decomposition (engine.rs is 64KB)
+- [x] Replace manual arg parsing with clap (I-008) → Sprint 4
+- [x] Engine module decomposition (engine.rs is 64KB) → Sprint 4
 - [ ] Agent process re-attachment via PID (Option B recovery — deferred from Sprint 1)
 - [ ] Remote agent harness (SSH/container-based invocation)
 - [ ] Composite harness (chain multiple agents per slot)
