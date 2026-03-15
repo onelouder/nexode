@@ -84,7 +84,7 @@ impl LiveHarness {
     fn model(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude-sonnet-4-5",
-            Self::CodexCli => "gpt-4.1",
+            Self::CodexCli => "default",
         }
     }
 

@@ -2,12 +2,12 @@
 agent: gpt
 status: ready
 from: gpt
-timestamp: 2026-03-15T10:05:00-07:00
-task: "Sprint 2 — Real Agent Integration + Critical Fixes"
-branch: "agent/gpt/sprint-2-real-agents"
+timestamp: 2026-03-15T13:05:00-07:00
+task: "Pre-Sprint 3 — Codex CLI Live Verification"
+branch: "agent/gpt/codex-verify"
 ---
 
-# Handoff: Sprint 2 Ready For Review
+# Handoff: Codex Verification Ready For Review
 
 ## What This Sprint Delivers
 
@@ -67,11 +67,37 @@ Sprint 2 proves the daemon works with real CLI agents end-to-end. Three pillars:
 - `ANTHROPIC_API_KEY= OPENAI_API_KEY= cargo test -p nexode-daemon --features live-test --test live_harness -- --nocapture`
 - `cargo test -p nexode-daemon --features live-test --test live_harness live_claude_code_hello_world -- --nocapture` with a real Claude API key
 - `cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` with a real Claude API key
+- `cargo test -p nexode-daemon --features live-test --test live_harness live_codex_cli_hello_world -- --nocapture` with a real Codex CLI + `OPENAI_API_KEY`
+- `unset ANTHROPIC_API_KEY && cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` to force Codex
+- `NEXODE_DEMO_HARNESS=codex-cli bash scripts/demo.sh`
 
 ## Remaining Review Focus
 
-- Codex live smoke coverage is still unverified in this environment.
+- Demo polling still exits at `merge_queue` / pre-merge repo contents due known issue `I-019`.
 - Confirm the command-ack outcome surface is sufficient for planned UI/client behavior.
+
+## Codex CLI Verification (Pre-Sprint 3)
+
+- **Date:** 2026-03-15
+- **Agent:** gpt
+- **`codex` version:** `codex-cli 0.104.0-alpha.1`
+- **Model used:** Codex default model (no explicit `--model` flag)
+
+### Results
+
+| Test | Result | Notes |
+|---|---|---|
+| `live_codex_cli_hello_world` | ✅ | Passed after aligning completion detection to Codex's real `type: "turn.completed"` JSON output and using the CLI default model. |
+| `live_full_lifecycle` (Codex) | ✅ | Passed with `ANTHROPIC_API_KEY` unset to force Codex. `MoveTask -> MergeQueue` returned `Executed`, slot reached `DONE`. |
+| `scripts/demo.sh` (Codex) | ✅ | Ran successfully with `NEXODE_DEMO_HARNESS=codex-cli`; reached `REVIEW`, queued merge, then exited while final status still showed `merge_queue` due known `I-019`. |
+
+### Observations
+
+- In this environment, Codex success completion is emitted as `{"type":"turn.completed", ...}` rather than `{"event":"done"}` or `{"status":"completed"}`.
+- Successful Codex telemetry is emitted on the same `type: "turn.completed"` JSON line under `usage.input_tokens`, `usage.cached_input_tokens`, and `usage.output_tokens`.
+- The hard-coded Codex test/demo model `gpt-4.1` is not supported on this account.
+- Explicit `gpt-5` and `gpt-5-codex` model selection also failed here because the local Codex configuration injects `reasoning.effort = xhigh`, which those models reject.
+- Using Codex's default model path avoids both compatibility issues and works end-to-end.
 
 ## What NOT to Change
 

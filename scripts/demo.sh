@@ -30,7 +30,7 @@ case "${HARNESS}" in
     API_ENV="ANTHROPIC_API_KEY"
     ;;
   codex-cli)
-    MODEL="${NEXODE_DEMO_MODEL:-gpt-4.1}"
+    MODEL="${NEXODE_DEMO_MODEL:-default}"
     API_ENV="OPENAI_API_KEY"
     ;;
   *)
