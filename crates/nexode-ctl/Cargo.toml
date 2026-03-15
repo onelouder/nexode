@@ -1,0 +1,10 @@
+[package]
+name = "nexode-ctl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.51", features = ["derive"] }
+nexode-proto = { path = "../nexode-proto" }
+tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14.5", features = ["transport"] }

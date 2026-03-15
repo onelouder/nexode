@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "crates/nexode-daemon",
+    "crates/nexode-proto",
+    "crates/nexode-ctl",
+]
+resolver = "2"
