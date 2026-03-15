@@ -1,56 +1,65 @@
 ---
 agent: gpt
-status: review
+status: ready
 from: pc
-timestamp: 2026-03-14T22:59:48-07:00
-task: "Phase 0 Spike — Build and validate core Nexode daemon"
+timestamp: 2026-03-15T00:17:00-07:00
+task: "Sprint 1 — WAL Recovery + Agent Harness"
 ---
 
 # Handoff: pc → gpt (Codex)
 
-## Claim Status
+## What This Sprint Delivers
 
-- `gpt` claimed this handoff on branch `agent/gpt/phase-0-spike`
-- Current focus: branch now includes the runnable daemon engine, per-project merge queue, verification timeouts, SQLite single-owner accounting actor, and `nexode-ctl`; ready for human review on GitHub
-- Workspace scaffold is in place and `cargo check --workspace` is green
-- Session Config Manager is implemented with D-003/D-004 behavior, include resolution, `.nexode.yaml` merging, and legacy v1 wrapping
-- Token Accountant is implemented with SQLite `token_log`, `project_costs`, project budget alert evaluation, and a dedicated actor for serialized writes
-- Git Worktree Orchestrator is implemented with create/list/remove, detached verification before fast-forward merge, and bounded verification command timeouts
-- Mock agent process manager is implemented with tokio-based stdout/stderr streaming, telemetry parsing, crash respawn, watchdog timeout handling, and `SlotAgentSwapped` emission
-- gRPC skeleton is implemented with tonic server stubs for `SubscribeEvents`, `DispatchCommand`, and `GetFullState`, backed by in-memory channels/state and verified through a real client/server test harness
-- The daemon engine now wires session loading, worktree provisioning, mock agent spawning, telemetry accounting, budget hard-kill, task-state transitions, and the per-project FIFO merge queue end-to-end
-- `nexode-ctl` now supports `status`, `watch`, and dispatching slot/task/project/agent commands against the live daemon
-- Branch is ready for human review on GitHub
+Two capabilities that take Nexode from "validated spike" to "usable tool":
 
-## What was done (pc, Session 1 + Kanban Architecture)
+1. **WAL-based crash recovery** — daemon persists runtime state to disk, survives restarts, recovers slot state and cost totals
+2. **Agent Harness abstraction** — trait-based adapter layer replacing mock scripts, enabling real Claude Code and Codex CLI agents
+3. **Basic context compiler** — assembles task description, file globs, and git diff into context payload for agent dispatch
 
-1. **Normalized master-spec.md** — Fixed PDF artifacts, added 74 HTML anchors, locked at v2.0.1
-2. **Resolved all 8 spec contradictions** — D-001 through D-008, then superseded D-001 with D-009
-3. **Kanban state machine architecture** — MERGE_QUEUE + RESOLVING states, barrier sync, autonomy overrides
-4. **Quarantined 33 deferred requirements** — Phase 4/5/Pool scope separated from active work
-5. **Updated AGENTS.md** — Spec pin, decomposition guardrail
-6. **Amended D-004** — Array union merge strategy for config cascade
-7. **Amended D-008** — Post-merge build/test verification for kill criteria
-8. **All decisions ACCEPTED** — D-002 through D-010 are now binding
+## What Was Done (pc, Sprint 1 Prep)
 
-## What to do (gpt/Codex)
+1. **Phase 0 code review** — reviewed all 3 Codex commits, verified 6/6 exit criteria met
+2. **ISSUES.md** — cataloged 8 issues (I-001 through I-008) and 7 risks (R-001 through R-007); 4 issues resolved, 4 remaining low-priority
+3. **Merged Phase 0** — squash-merged PR #6 (Codex spike) and PR #5 (ISSUES.md) into main
+4. **Sprint 1 architecture** — wrote `docs/architecture/wal-recovery.md` (WAL format, recovery protocol, compaction strategy) and `docs/architecture/agent-harness.md` (trait design, harness implementations, context compiler)
+5. **Sprint 1 instructions** — wrote `.agents/CODEX-SPRINT-1.md` with full task breakdown, exit criteria, and dependency list
+6. **Updated PLAN_NOW.md, ROADMAP.md** — Sprint 1 tasks and milestone tracking
 
-Read `.agents/CODEX-SPRINT-0.md` for full instructions. Summary:
+## What to Do (gpt/Codex)
 
-- **Branch:** `agent/gpt/phase-0-spike`
-- **Goal:** Rust daemon that parses session.yaml, spawns mock agents into git worktrees, tracks cost, and merges work back with post-merge build verification
-- **Cargo workspace:** `nexode-daemon`, `nexode-proto`, `nexode-ctl`
-- **Key deliverables:** Proto file (with D-009 enum), session parser (with D-004 merge logic), agent lifecycle, merge queue, nexode-ctl
-- **Exit criteria:** 6 specific tests defined in the sprint doc
+Read `.agents/CODEX-SPRINT-1.md` for full instructions. Key points:
 
-## Files to read first
+- **Branch:** `agent/gpt/sprint-1-wal-harness`
+- **Week 1:** WAL persistence + recovery + engine integration + tests
+- **Week 2:** AgentHarness trait + MockHarness + ClaudeCodeHarness + CodexCliHarness + context compiler + harness selection + tests
+- **New dependencies:** `bincode`, `sha2`, `crc32fast`, `uuid`, `async-trait`, `glob`
+- **6 exit criteria** defined in sprint doc — all must pass
+
+## Files to Read First
 
 1. `AGENTS.md` — Rules, capabilities, git conventions
-2. `.agents/CODEX-SPRINT-0.md` — Full sprint instructions
-3. `DECISIONS.md` — All accepted architectural decisions
-4. `docs/spec/master-spec.md` — Sections 2, 3, 4, 8
-5. `docs/architecture/kanban-state-machine.md` — Merge queue and state transitions
+2. `.agents/CODEX-SPRINT-1.md` — Full sprint instructions (start here)
+3. `docs/architecture/wal-recovery.md` — WAL format and recovery protocol
+4. `docs/architecture/agent-harness.md` — Harness trait design and implementations
+5. `DECISIONS.md` — All accepted architectural decisions (D-002 through D-010)
+6. `ISSUES.md` — Open issues and risks from Phase 0
 
-## Files NOT to modify
+## Files NOT to Modify
 
 - `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*` — pc's domain
+
+## Key Technical Decisions
+
+- **WAL file:** `.nexode/wal.binlog`, framed `[u32 len][u32 crc][payload]`, bincode serialization
+- **Recovery:** Option A — kill + respawn surviving agents (don't re-attach via PID)
+- **Checkpoint interval:** 60 seconds, full RuntimeState snapshot
+- **Harness trait:** Stateless, synchronous `build_command` + line-oriented `parse_telemetry`/`detect_completion`
+- **Context compiler:** Minimal Phase 1 — task + globs + git diff + README, no AST/embeddings
+- **Harness selection:** Infer from `model` field, optional explicit `harness` override in session.yaml
+
+## Open Issues (Low Priority, Not Sprint Blocking)
+
+- I-004: `provider_config` shallow merge
+- I-005: SQLite schema has no migration versioning
+- I-007: Merge queue drains on tick only (2s delay)
+- I-008: Manual arg parsing vs clap in daemon main.rs
