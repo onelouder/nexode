@@ -147,3 +147,39 @@
 - **Decision:** The `RESOLVING` state and its associated Kanban column SHALL be implemented in Phase 0 with Git-level conflict detection as the sole trigger. In Phase 4, the trigger is upgraded: before the Orchestrator attempts `git merge`, the Predictive Conflict Routing subsystem compares AST mutations across the worktree branch and the target branch. If structural conflict risk exceeds a configurable threshold, the task transitions to `RESOLVING` proactively — before Git sees it. This catches the dangerous case where Git can merge text cleanly but the result has incompatible type signatures, broken imports, or semantic regressions.
 - **Rationale:** The state machine must be stable from Phase 0 onward — agents and UI should never need to learn a new workflow. Only the trigger sophistication improves across phases. Deferring the state itself to Phase 4 would leave Phase 0-3 without a conflict resolution workflow.
 - **Consequences:** (1) Phase 0-3: RESOLVING triggered only by `git merge` failure. Adequate for textual conflicts. (2) Phase 4+: RESOLVING additionally triggered by AST conflict risk scoring before merge attempt. (3) The `conflict_risk` field on the `Worktree` message gains operational significance in Phase 4 when the AST parser populates it with real scores. (4) Deferred requirements `REQ-P4-007` and `REQ-P4-008` in `docs/spec/deferred.md` are formally linked to D-009/D-010 as Phase 4 upgrade dependencies.
+
+---
+
+## D-011: Sawtooth coherence model for Observer evaluation (Phase 4+)
+
+- **Date:** 2026-03-15
+- **By:** pc
+- **Status:** PROPOSED (Phase 4+ scope — not binding for Sprint 3)
+- **Context:** Sprint 3 introduces the Observer subsystem with heuristic loop detection (repeated outputs, stuck timeouts, budget velocity). These heuristics are effective for gross failure modes but cannot detect gradual semantic drift — an agent slowly losing alignment with its task directive as the swarm's codebase evolves around it. The master spec's Phase 4 (Smart Context and Semantic Memory) envisions an Observer with LLM-backed coherence evaluation. This decision proposes the quantitative model that evaluation would use.
+- **Decision:** Define a sawtooth coherence model for predicting agent context degradation between checkpoints:
+
+  ```
+  P(S, t) = P₀(k) * exp(-λ * ΔS_relevant(t) - μ * O_ipc(t))
+  ```
+
+  Where:
+  - `P₀(k) = checkpoint_restoration^k * P_initial` — coherence at the start of the k-th checkpoint cycle. Decays across cycles because gist compression is lossy (information lost at each context reset).
+  - `ΔS_relevant(t) = Σ(change_magnitude_i * relevance_weight_i)` — cumulative state drift by other agents since last checkpoint, weighted by task relevance.
+  - `relevance_weight_i = |task_tags ∩ change_tags| / |task_tags ∪ change_tags|` — Jaccard similarity between the observing agent's task domain tags and the tags of each swarm change.
+  - `O_ipc(t) = briefing_tokens / context_window_size + coordination_latency / eval_interval` — overhead from inter-process coordination and briefing injection.
+  - `λ` (lambda_drift, default 0.01) — decay rate for state drift.
+  - `μ` (mu_ipc, default 0.001) — decay rate for IPC overhead.
+
+  Key properties:
+  1. **Sawtooth shape** — coherence degrades between checkpoints, partially restored at each checkpoint.
+  2. **Monotonic envelope** — the `P₀` term decreases across cycles because gist compression is lossy. An agent that runs for 20 cycles has lower peak coherence than one that runs for 3, even with identical checkpointing.
+  3. **Relevance weighting** — irrelevant swarm changes (agent C modifying CSS files) don't penalize agent B's coherence on auth tasks.
+  4. **Checkpoint frequency is the control variable** — more frequent checkpoints keep P higher but increase O_ipc (more tokens spent on briefings).
+
+  Default parameters: `lambda_drift=0.01`, `mu_ipc=0.001`, `checkpoint_restoration=0.9`, `coherence_floor=0.1`.
+
+- **Rationale:** The model formalizes the empirical observation (from Helios context gates and OpenClaw agent runs) that agent quality degrades with context window staleness. Without a quantitative model, checkpoint frequency is either too aggressive (wasting tokens on unnecessary briefings) or too conservative (letting agents drift into incoherence). The exponential decay with Jaccard-weighted relevance filtering provides a tractable optimization target. The parameters can be tuned empirically once the Observer has real evaluation data (Phase 4+).
+- **Relationship to Sprint 3:** Sprint 3's `LoopDetector` handles the degenerate case (P ≈ 0, agent is obviously stuck). This model addresses the gradual case (P slowly decaying from 0.8 to 0.4, agent is subtly drifting). Sprint 3 should NOT implement this model. The `observer.rs` module structure should not preclude adding it later.
+- **Dependencies:** Requires Phase 4 infrastructure: Shared Memory Bus (for `ΔS_relevant` computation), relevance tags on memory nodes (for Jaccard filtering), and an LLM evaluation endpoint (for calibrating P against ground-truth coherence). See `docs/spec/deferred.md` for Phase 4 requirements.
+- **Design reference:** `docs/architecture/observer-design.md` Section 3.
+- **Consequences:** (1) Phase 4 Observer gains a `CoherenceTracker` struct implementing this model. (2) The daemon's SQLite schema gains an `observer_evaluations` table for storing P(S,t) time series per agent. (3) The TUI/VS Code extension can render coherence sparklines per agent slot. (4) Checkpoint frequency becomes an adaptive parameter rather than a fixed config value.
