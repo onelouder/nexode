@@ -80,7 +80,8 @@ pub fn recover_from_wal(
     for (index, entry) in read.entries.iter().enumerate() {
         match entry {
             WalEntry::SessionStarted {
-                session_config_hash, ..
+                session_config_hash,
+                ..
             } => latest_session_hash = Some(*session_config_hash),
             WalEntry::Checkpoint { full_state, .. } => {
                 checkpoint_state = deserialize_checkpoint(full_state)?;
@@ -105,7 +106,11 @@ pub fn recover_from_wal(
     let mut restart_slots = Vec::new();
     for (project_id, project) in &mut state.projects {
         if let Some(inflight_slot) = project.merge_inflight_slot.take() {
-            if !project.merge_queue.iter().any(|slot_id| slot_id == &inflight_slot) {
+            if !project
+                .merge_queue
+                .iter()
+                .any(|slot_id| slot_id == &inflight_slot)
+            {
                 project.merge_queue.push_front(inflight_slot);
             }
         }

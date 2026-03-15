@@ -3,8 +3,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use nexode_proto::SlotAgentSwapped;
@@ -266,7 +266,11 @@ async fn run_single_agent(
     event_tx: &mpsc::UnboundedSender<AgentProcessEvent>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> Result<AgentOutcome, AgentProcessError> {
-    write_setup_files(&spec.slot_id, &spec.worktree_path, &spec.command.setup_files)?;
+    write_setup_files(
+        &spec.slot_id,
+        &spec.worktree_path,
+        &spec.command.setup_files,
+    )?;
 
     let mut command = Command::new(&spec.command.program);
     command
@@ -300,6 +304,7 @@ async fn run_single_agent(
 
     let mut last_output = Instant::now();
     let mut completion_detected = false;
+    let requires_completion_signal = spec.harness.requires_completion_signal();
     let mut tick = time::interval(spec.watchdog_poll_interval);
     loop {
         tokio::select! {
@@ -323,9 +328,11 @@ async fn run_single_agent(
                     slot_id: spec.slot_id.clone(),
                     source,
                 })? {
+                    // DECISION: I-009-fix - non-zero exit always means failure. See ISSUES.md I-009.
                     return Ok(AgentOutcome::Completed {
                         status_code: status.code(),
-                        success: status.success() || completion_detected,
+                        success: status.success()
+                            && (completion_detected || !requires_completion_signal),
                     });
                 }
                 if last_output.elapsed() >= spec.watchdog_timeout {
@@ -407,18 +414,30 @@ fn parse_space_delimited(line: &str) -> Option<ParsedTelemetry> {
         tokens_out: None,
         cost_usd: None,
     };
+    let mut found = false;
 
     for part in line.split_whitespace() {
-        let (key, value) = part.split_once('=')?;
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
         match key {
-            "in" => telemetry.tokens_in = value.parse().ok(),
-            "out" => telemetry.tokens_out = value.parse().ok(),
-            "cost" => telemetry.cost_usd = value.parse().ok(),
+            "in" => {
+                telemetry.tokens_in = value.parse().ok();
+                found = true;
+            }
+            "out" => {
+                telemetry.tokens_out = value.parse().ok();
+                found = true;
+            }
+            "cost" => {
+                telemetry.cost_usd = value.parse().ok();
+                found = true;
+            }
             _ => {}
         }
     }
 
-    Some(telemetry)
+    found.then_some(telemetry)
 }
 
 fn parse_csv(line: &str) -> Option<ParsedTelemetry> {
@@ -479,8 +498,10 @@ fn next_agent_id(prefix: Option<&str>, slot_id: &str) -> String {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
 
-    use crate::harness::MockHarness;
+    use crate::context::ContextPayload;
+    use crate::harness::{HarnessConfig, HarnessError, MockHarness};
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::timeout;
@@ -604,6 +625,134 @@ echo "after-timeout"
         )));
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn completion_marker_does_not_override_non_zero_exit() {
+        let fixture = ProcessFixture::new();
+        let manager = AgentProcessManager::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let script = r#"
+echo "{\"type\":\"result\"}"
+exit 1
+"#;
+
+        let supervisor = manager
+            .spawn_slot(
+                fixture.spec_with_harness(
+                    AgentCommand::shell(script),
+                    Arc::new(TestHarness::completion_required("{\"type\":\"result\"}")),
+                    false,
+                    0,
+                ),
+                tx,
+            )
+            .expect("spawn slot");
+
+        let events = collect_until_first_exit(&mut rx).await;
+        supervisor.wait().await.expect("wait for supervisor");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentProcessEvent::Exited {
+                status_code: Some(1),
+                success: false,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn zero_exit_requires_completion_signal_for_real_harnesses() {
+        let fixture = ProcessFixture::new();
+        let manager = AgentProcessManager::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let supervisor = manager
+            .spawn_slot(
+                fixture.spec_with_harness(
+                    AgentCommand::shell("echo boot\nexit 0"),
+                    Arc::new(TestHarness::completion_required("{\"type\":\"result\"}")),
+                    false,
+                    0,
+                ),
+                tx,
+            )
+            .expect("spawn slot");
+
+        let events = collect_until_first_exit(&mut rx).await;
+        supervisor.wait().await.expect("wait for supervisor");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentProcessEvent::Exited {
+                status_code: Some(0),
+                success: false,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn zero_exit_with_completion_signal_is_success() {
+        let fixture = ProcessFixture::new();
+        let manager = AgentProcessManager::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let supervisor = manager
+            .spawn_slot(
+                fixture.spec_with_harness(
+                    AgentCommand::shell("echo '{\"type\":\"result\"}'\nexit 0"),
+                    Arc::new(TestHarness::completion_required("{\"type\":\"result\"}")),
+                    false,
+                    0,
+                ),
+                tx,
+            )
+            .expect("spawn slot");
+
+        let events = collect_until_success_exit(&mut rx).await;
+        supervisor.wait().await.expect("wait for supervisor");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentProcessEvent::Exited {
+                status_code: Some(0),
+                success: true,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn zero_exit_without_completion_signal_is_success_for_mock_compat() {
+        let fixture = ProcessFixture::new();
+        let manager = AgentProcessManager::new();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let supervisor = manager
+            .spawn_slot(
+                fixture.spec_with_harness(
+                    AgentCommand::shell("echo boot\nexit 0"),
+                    Arc::new(TestHarness::completion_optional("done")),
+                    false,
+                    0,
+                ),
+                tx,
+            )
+            .expect("spawn slot");
+
+        let events = collect_until_success_exit(&mut rx).await;
+        supervisor.wait().await.expect("wait for supervisor");
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentProcessEvent::Exited {
+                status_code: Some(0),
+                success: true,
+                ..
+            }
+        )));
+    }
+
     async fn collect_until_success_exit(
         rx: &mut mpsc::UnboundedReceiver<AgentProcessEvent>,
     ) -> Vec<AgentProcessEvent> {
@@ -614,6 +763,23 @@ echo "after-timeout"
                 .expect("receive event before timeout")
                 .expect("event");
             let done = matches!(event, AgentProcessEvent::Exited { success: true, .. });
+            events.push(event);
+            if done {
+                return events;
+            }
+        }
+    }
+
+    async fn collect_until_first_exit(
+        rx: &mut mpsc::UnboundedReceiver<AgentProcessEvent>,
+    ) -> Vec<AgentProcessEvent> {
+        let mut events = Vec::new();
+        loop {
+            let event = timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("receive event before timeout")
+                .expect("event");
+            let done = matches!(event, AgentProcessEvent::Exited { .. });
             events.push(event);
             if done {
                 return events;
@@ -646,8 +812,25 @@ echo "after-timeout"
             respawn_on_failure: bool,
             max_restarts: usize,
         ) -> AgentProcessSpec {
-            self.spec_with_timeout(
+            self.spec_with_harness_and_timeout(
                 command,
+                Arc::new(MockHarness),
+                respawn_on_failure,
+                max_restarts,
+                Duration::from_secs(5),
+            )
+        }
+
+        fn spec_with_harness(
+            &self,
+            command: AgentCommand,
+            harness: Arc<dyn AgentHarness>,
+            respawn_on_failure: bool,
+            max_restarts: usize,
+        ) -> AgentProcessSpec {
+            self.spec_with_harness_and_timeout(
+                command,
+                harness,
                 respawn_on_failure,
                 max_restarts,
                 Duration::from_secs(5),
@@ -661,17 +844,84 @@ echo "after-timeout"
             max_restarts: usize,
             watchdog_timeout: Duration,
         ) -> AgentProcessSpec {
+            self.spec_with_harness_and_timeout(
+                command,
+                Arc::new(MockHarness),
+                respawn_on_failure,
+                max_restarts,
+                watchdog_timeout,
+            )
+        }
+
+        fn spec_with_harness_and_timeout(
+            &self,
+            command: AgentCommand,
+            harness: Arc<dyn AgentHarness>,
+            respawn_on_failure: bool,
+            max_restarts: usize,
+            watchdog_timeout: Duration,
+        ) -> AgentProcessSpec {
             AgentProcessSpec {
                 slot_id: self.slot_id.clone(),
                 agent_id_prefix: None,
                 worktree_path: self.worktree.clone(),
                 command,
-                harness: Arc::new(MockHarness),
+                harness,
                 watchdog_timeout,
                 watchdog_poll_interval: Duration::from_millis(25),
                 respawn_on_failure,
                 max_restarts,
             }
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestHarness {
+        completion_line: &'static str,
+        requires_signal: bool,
+    }
+
+    impl TestHarness {
+        fn completion_required(completion_line: &'static str) -> Self {
+            Self {
+                completion_line,
+                requires_signal: true,
+            }
+        }
+
+        fn completion_optional(completion_line: &'static str) -> Self {
+            Self {
+                completion_line,
+                requires_signal: false,
+            }
+        }
+    }
+
+    impl AgentHarness for TestHarness {
+        fn name(&self) -> &str {
+            "test"
+        }
+
+        fn build_command(
+            &self,
+            _worktree_path: &Path,
+            _task: &str,
+            _context: &ContextPayload,
+            _config: &HarnessConfig,
+        ) -> Result<AgentCommand, HarnessError> {
+            unreachable!("test harness does not build commands")
+        }
+
+        fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry> {
+            ParsedTelemetry::parse(line)
+        }
+
+        fn requires_completion_signal(&self) -> bool {
+            self.requires_signal
+        }
+
+        fn detect_completion(&self, line: &str) -> bool {
+            line.trim() == self.completion_line
         }
     }
 }

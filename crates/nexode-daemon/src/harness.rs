@@ -3,6 +3,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::context::ContextPayload;
@@ -27,6 +28,9 @@ pub trait AgentHarness: Send + Sync + fmt::Debug {
     ) -> Result<AgentCommand, HarnessError>;
 
     fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry>;
+
+    /// Whether a zero exit code also requires an explicit completion marker.
+    fn requires_completion_signal(&self) -> bool;
 
     fn detect_completion(&self, line: &str) -> bool;
 }
@@ -120,6 +124,10 @@ impl AgentHarness for MockHarness {
         ParsedTelemetry::parse(line)
     }
 
+    fn requires_completion_signal(&self) -> bool {
+        false
+    }
+
     fn detect_completion(&self, line: &str) -> bool {
         let line = line.trim();
         line == "completed" || line.starts_with("completed ")
@@ -150,7 +158,9 @@ impl AgentHarness for ClaudeCodeHarness {
             ],
         );
         if let Some(api_key) = config.provider_config.get("ANTHROPIC_API_KEY") {
-            command.env.insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+            command
+                .env
+                .insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
         }
         command.setup_files.push(SetupFile {
             relative_path: "CLAUDE.md".into(),
@@ -164,8 +174,12 @@ impl AgentHarness for ClaudeCodeHarness {
         parse_keyed_telemetry(line)
     }
 
+    fn requires_completion_signal(&self) -> bool {
+        true
+    }
+
     fn detect_completion(&self, line: &str) -> bool {
-        line.contains("\"type\":\"result\"") || line.contains("completed")
+        json_field_is(line, "type", "result")
     }
 }
 
@@ -183,10 +197,19 @@ impl AgentHarness for CodexCliHarness {
     ) -> Result<AgentCommand, HarnessError> {
         let mut command = AgentCommand::new(
             "codex",
-            vec!["exec", "--full-auto", "--json", "--model", &config.model, task],
+            vec![
+                "exec",
+                "--full-auto",
+                "--json",
+                "--model",
+                &config.model,
+                task,
+            ],
         );
         if let Some(api_key) = config.provider_config.get("OPENAI_API_KEY") {
-            command.env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
+            command
+                .env
+                .insert("OPENAI_API_KEY".to_string(), api_key.clone());
         }
         command.setup_files.push(SetupFile {
             relative_path: ".codex/instructions.md".into(),
@@ -200,8 +223,12 @@ impl AgentHarness for CodexCliHarness {
         parse_keyed_telemetry(line).or_else(|| ParsedTelemetry::parse(line))
     }
 
+    fn requires_completion_signal(&self) -> bool {
+        true
+    }
+
     fn detect_completion(&self, line: &str) -> bool {
-        line.contains("\"completed\"") || line.contains("\"event\":\"done\"")
+        json_field_is(line, "event", "done") || json_field_is(line, "status", "completed")
     }
 }
 
@@ -280,6 +307,13 @@ fn render_context_document(context: &ContextPayload) -> String {
     lines.join("\n")
 }
 
+fn json_field_is(line: &str, field: &str, expected: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        return false;
+    };
+    value.get(field).and_then(Value::as_str) == Some(expected)
+}
+
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
@@ -295,14 +329,23 @@ mod tests {
     #[test]
     fn model_and_override_select_expected_harnesses() {
         let slot = base_slot("claude-sonnet-4-6");
-        assert_eq!(infer_harness(&slot).expect("infer harness"), HarnessKind::ClaudeCode);
+        assert_eq!(
+            infer_harness(&slot).expect("infer harness"),
+            HarnessKind::ClaudeCode
+        );
 
         let mut slot = base_slot("gpt-4.1");
         slot.harness = Some("mock".to_string());
-        assert_eq!(infer_harness(&slot).expect("explicit harness"), HarnessKind::Mock);
+        assert_eq!(
+            infer_harness(&slot).expect("explicit harness"),
+            HarnessKind::Mock
+        );
 
         let slot = base_slot("codex");
-        assert_eq!(infer_harness(&slot).expect("infer harness"), HarnessKind::CodexCli);
+        assert_eq!(
+            infer_harness(&slot).expect("infer harness"),
+            HarnessKind::CodexCli
+        );
     }
 
     #[test]
@@ -324,10 +367,12 @@ mod tests {
 
         assert_eq!(command.program.to_string_lossy(), "claude");
         assert!(command.args.iter().any(|arg| arg == "-p"));
-        assert!(command
-            .setup_files
-            .iter()
-            .any(|file| file.relative_path == Path::new("CLAUDE.md")));
+        assert!(
+            command
+                .setup_files
+                .iter()
+                .any(|file| file.relative_path == Path::new("CLAUDE.md"))
+        );
     }
 
     #[test]
@@ -349,10 +394,27 @@ mod tests {
 
         assert_eq!(command.program.to_string_lossy(), "codex");
         assert_eq!(command.args[0].to_string_lossy(), "exec");
-        assert!(command
-            .setup_files
-            .iter()
-            .any(|file| file.relative_path == Path::new(".codex/instructions.md")));
+        assert!(
+            command
+                .setup_files
+                .iter()
+                .any(|file| file.relative_path == Path::new(".codex/instructions.md"))
+        );
+    }
+
+    #[test]
+    fn real_harness_completion_detection_uses_json_instead_of_substring_matching() {
+        let claude = ClaudeCodeHarness;
+        let codex = CodexCliHarness;
+
+        assert!(!claude.detect_completion("task completed successfully"));
+        assert!(claude.detect_completion(r#"{"type":"result","subtype":"success"}"#));
+        assert!(claude.detect_completion(r#"{ "type" : "result" }"#));
+
+        assert!(!codex.detect_completion("completed"));
+        assert!(codex.detect_completion(r#"{"event":"done"}"#));
+        assert!(codex.detect_completion(r#"{"status":"completed"}"#));
+        assert!(!codex.detect_completion(r#"{"event":"progress"}"#));
     }
 
     fn base_slot(model: &str) -> SlotConfig {

@@ -7,3 +7,4 @@
 
 - [2026-03-08] [jarvis] Repository initialized from sovereign-project-template
 - [2026-03-15] [gpt] Added Sprint 1 WAL recovery, synchronous agent harness adapters, context compilation, and recovery-aware daemon bootstrap
+- [2026-03-15] [gpt] Added Sprint 2 real-agent fixes: strict exit handling, JSON completion parsing, command acknowledgments, gated live harness smoke tests, and demo script

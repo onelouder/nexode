@@ -143,11 +143,7 @@ impl GitWorktreeOrchestrator {
         repo_path: impl AsRef<Path>,
         worktree_root: impl AsRef<Path>,
     ) -> Result<Self, GitWorktreeError> {
-        Self::with_worktree_root_and_timeout(
-            repo_path,
-            worktree_root,
-            DEFAULT_VERIFICATION_TIMEOUT,
-        )
+        Self::with_worktree_root_and_timeout(repo_path, worktree_root, DEFAULT_VERIFICATION_TIMEOUT)
     }
 
     pub fn with_worktree_root_and_timeout(
@@ -580,19 +576,13 @@ fn exit_code(status: ExitStatus) -> i32 {
     status.code().unwrap_or(-1)
 }
 
-fn read_child_output(
-    child: &mut Child,
-    cwd: &Path,
-) -> Result<(String, String), GitWorktreeError> {
+fn read_child_output(child: &mut Child, cwd: &Path) -> Result<(String, String), GitWorktreeError> {
     let stdout = read_stream(child.stdout.take(), cwd)?;
     let stderr = read_stream(child.stderr.take(), cwd)?;
     Ok((stdout, stderr))
 }
 
-fn read_stream(
-    mut stream: Option<impl Read>,
-    cwd: &Path,
-) -> Result<String, GitWorktreeError> {
+fn read_stream(mut stream: Option<impl Read>, cwd: &Path) -> Result<String, GitWorktreeError> {
     let Some(mut stream) = stream.take() else {
         return Ok(String::new());
     };
