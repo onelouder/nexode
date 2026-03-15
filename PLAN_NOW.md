@@ -5,35 +5,25 @@
 
 ## Current Sprint
 
-- **Goal:** Sprint 2 — Real Agent Integration + Critical Fixes
-- **Deadline:** 2026-03-29 (2 weeks from sprint start)
+- **Goal:** Pre-Sprint 3 — Codex CLI Live Verification
+- **Deadline:** 2026-03-15
 - **Active Agent:** gpt
-- **Previous sprint:** Sprint 1 — WAL Recovery + Agent Harness (complete, merged to main)
+- **Previous sprint:** Sprint 2 — Real Agent Integration + Critical Fixes (complete, merged to main)
 
 ## Tasks
 
-### Week 1: Bug Fixes + Command Acknowledgment
+### Verification Gate
 
-- [x] Read sprint docs: `.agents/CODEX-SPRINT-2.md`, `docs/architecture/command-ack.md`, `docs/reviews/sprint-1-review.md`
-- [x] Create branch `agent/gpt/sprint-2-real-agents`
-- [x] **Fix I-009:** Change `completion_detected` semantics — non-zero exit always means failure. Add `requires_completion_signal()` to `AgentHarness` trait. Update `process.rs` logic.
-- [x] **Fix I-010:** Emit `AgentStateChanged(Executing)` after `SlotAgentSwapped` in `engine.rs`.
-- [x] **Fix I-015:** Replace JSON substring matching with `serde_json` parsing in `ClaudeCodeHarness` and `CodexCliHarness` completion detection. Add `serde_json` to deps.
-- [x] **R-007:** Update proto — add `command_id` echo, `CommandOutcome` enum to `CommandResponse`.
-- [x] **R-007:** Replace fire-and-forget channel with oneshot request/response in `transport.rs`.
-- [x] **R-007:** Add command validation and result reporting in engine command handler.
-- [x] **R-007:** Update `nexode-ctl` to display command results.
-- [x] Unit tests for all fixes.
-
-### Week 2: Live Integration + Demo
-
-- [x] Add `live-test` feature flag to `nexode-daemon/Cargo.toml`.
-- [x] Create `tests/live_harness.rs` with gated integration tests.
-- [x] Add gated ClaudeCode smoke test on a temp repo.
-- [x] Add gated CodexCli smoke test on a temp repo.
-- [x] Add gated full lifecycle test: agent completes → MoveTask → merge → DONE.
-- [x] Create `scripts/demo.sh` end-to-end demo script.
-- [x] Verify all existing tests still pass (`cargo test -p nexode-daemon`, `cargo test -p nexode-ctl`, `cargo check --workspace`).
+- [x] Read `.agents/prompts/codex-verify.md` and required context files.
+- [x] Confirm baseline tests pass: `cargo test -p nexode-daemon`, `cargo test -p nexode-ctl`, `cargo check --workspace`.
+- [x] Run real Codex smoke test: `live_codex_cli_hello_world`.
+- [x] Run forced-Codex full lifecycle test: `live_full_lifecycle` with `ANTHROPIC_API_KEY` unset.
+- [x] Run `scripts/demo.sh` with `NEXODE_DEMO_HARNESS=codex-cli`.
+- [x] Patch Codex compatibility based on real CLI output:
+  - use Codex default model path for tests/demo instead of hard-coding `gpt-4.1`
+  - detect completion from `type: "turn.completed"`
+  - parse telemetry from Codex `turn.completed` JSON usage fields
+- [x] Update `HANDOFF.md` with verification results.
 
 ## Blocked
 
@@ -41,42 +31,25 @@
 
 ## Done This Sprint
 
-- Fixed I-009 in `process.rs`: success now requires zero exit code, and real harnesses can require a completion signal.
-- Fixed I-010 in `engine.rs`: `SlotAgentSwapped` now also emits `AgentStateChanged(Executing)` for the replacement agent.
-- Fixed I-015 in `harness.rs`: Claude/Codex completion detection now parses JSON instead of substring matching.
-- Kept the harness layer synchronous: command building and completion parsing stay in `harness.rs`, while async process lifecycle and streaming remain in `process.rs`.
-- Implemented R-007 across proto, transport, engine, and CLI:
-  - `CommandResponse` now echoes `command_id`
-  - `CommandOutcome` is returned to the client
-  - transport uses oneshot request/response with timeout
-  - engine validates slot existence and task-state transitions
-  - `nexode-ctl` prints real command outcomes
-- Added process, transport, engine, harness, and CLI tests for Sprint 2 behavior.
-- Added gated live harness integration tests and `scripts/demo.sh`.
-- Fixed the Claude live harness command/output contract and live-test assumptions discovered during credential-backed verification:
-  - Claude now runs with `--verbose --output-format stream-json`
-  - final JSON usage is parsed into telemetry without counting partial assistant messages
-  - live tests no longer assume temp fixture paths survive teardown or that non-merged files already exist in the repo
-- Verified local test suite:
-  - `cargo test -p nexode-daemon`
-  - `cargo test -p nexode-ctl`
-  - `cargo check --workspace`
-  - `cargo test -p nexode-daemon --features live-test --test live_harness` with blanked keys to confirm compile/self-skip path
-  - `cargo test -p nexode-daemon --features live-test --test live_harness live_claude_code_hello_world -- --nocapture` with a real Claude API key
-  - `cargo test -p nexode-daemon --features live-test --test live_harness live_full_lifecycle -- --nocapture` with a real Claude API key
+- Verified Codex live compatibility against the merged Sprint 2 code on `main`.
+- Confirmed the current Codex CLI emits `type: "turn.completed"` as the success marker.
+- Confirmed the current Codex CLI records usage under `usage.input_tokens`, `usage.cached_input_tokens`, and `usage.output_tokens`.
+- Fixed the Codex harness to detect and parse that real output shape.
+- Switched the Codex live-test/demo default model path to Codex's own default model because `gpt-4.1` is not supported in this account context.
+- Re-ran the real Codex smoke test and forced-Codex full lifecycle test successfully.
+- Confirmed `scripts/demo.sh` runs successfully with Codex, with the known `merge_queue` exit timing from `I-019`.
 
 ## Next Up
 
-- Review `agent/gpt/sprint-2-real-agents`.
-- Optional: run the Codex live smoke path in an environment with `codex` plus `OPENAI_API_KEY`.
+- Review `agent/gpt/codex-verify`.
+- Merge the Codex verification follow-up once reviewed.
 - Sprint 3: Observer Loops + Safety (loop detection, uncertainty routing, sandbox enforcement, event sequence numbers)
 
 ## Notes
 
-- Sprint scope defined in `.agents/CODEX-SPRINT-2.md`
-- Architecture doc: `docs/architecture/command-ack.md`
-- All Phase 0 + Sprint 1 decisions remain binding
-- Open issues: see `ISSUES.md` — I-009, I-010, I-015 are Sprint 2 targets
+- Verification prompt: `.agents/prompts/codex-verify.md`
+- All Phase 0 + Sprint 1 + Sprint 2 decisions remain binding
+- Open issues: see `ISSUES.md` — `I-016` through `I-019` remain open
 - Live tests gated behind `--features live-test` — require `claude` or `codex` CLI installed
-- Real credential-backed Claude live verification is complete; Codex live verification is still pending
+- Real credential-backed Claude and Codex live verification are both complete
 - Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`

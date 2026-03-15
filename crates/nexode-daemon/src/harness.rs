@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -198,17 +199,13 @@ impl AgentHarness for CodexCliHarness {
         context: &ContextPayload,
         config: &HarnessConfig,
     ) -> Result<AgentCommand, HarnessError> {
-        let mut command = AgentCommand::new(
-            "codex",
-            vec![
-                "exec",
-                "--full-auto",
-                "--json",
-                "--model",
-                &config.model,
-                task,
-            ],
-        );
+        let mut args: Vec<OsString> = vec!["exec".into(), "--full-auto".into(), "--json".into()];
+        if !config.model.trim().is_empty() && config.model != "default" {
+            args.push("--model".into());
+            args.push(config.model.clone().into());
+        }
+        args.push(task.into());
+        let mut command = AgentCommand::new("codex", args);
         if let Some(api_key) = config.provider_config.get("OPENAI_API_KEY") {
             command
                 .env
@@ -233,7 +230,9 @@ impl AgentHarness for CodexCliHarness {
     }
 
     fn detect_completion(&self, line: &str) -> bool {
-        json_field_is(line, "event", "done") || json_field_is(line, "status", "completed")
+        json_field_is(line, "type", "turn.completed")
+            || json_field_is(line, "event", "done")
+            || json_field_is(line, "status", "completed")
     }
 }
 
@@ -276,6 +275,7 @@ fn parse_json_summary_telemetry(line: &str) -> Option<ParsedTelemetry> {
         return None;
     };
     if !json_value_field_is(&value, "type", "result")
+        && !json_value_field_is(&value, "type", "turn.completed")
         && !json_value_field_is(&value, "event", "done")
         && !json_value_field_is(&value, "status", "completed")
     {
@@ -288,6 +288,8 @@ fn parse_json_summary_telemetry(line: &str) -> Option<ParsedTelemetry> {
             &[
                 &["usage", "input_tokens"],
                 &["usage", "inputTokens"],
+                &["usage", "cached_input_tokens"],
+                &["usage", "cachedInputTokens"],
                 &["usage", "prompt_tokens"],
                 &["usage", "promptTokens"],
                 &["input_tokens"],
@@ -489,12 +491,36 @@ mod tests {
 
         assert_eq!(command.program.to_string_lossy(), "codex");
         assert_eq!(command.args[0].to_string_lossy(), "exec");
+        assert!(command.args.iter().any(|arg| arg == "--model"));
+        assert!(command.args.iter().any(|arg| arg == "gpt-5-codex"));
         assert!(
             command
                 .setup_files
                 .iter()
                 .any(|file| file.relative_path == Path::new(".codex/instructions.md"))
         );
+    }
+
+    #[test]
+    fn codex_command_omits_model_flag_for_default_model() {
+        let harness = CodexCliHarness;
+        let command = harness
+            .build_command(
+                Path::new("."),
+                "Implement auth",
+                &sample_context(),
+                &HarnessConfig {
+                    model: "default".to_string(),
+                    provider_config: BTreeMap::new(),
+                    timeout_minutes: 30,
+                    max_context_tokens: None,
+                },
+            )
+            .expect("build codex command");
+
+        assert_eq!(command.program.to_string_lossy(), "codex");
+        assert_eq!(command.args[0].to_string_lossy(), "exec");
+        assert!(!command.args.iter().any(|arg| arg == "--model"));
     }
 
     #[test]
@@ -507,6 +533,7 @@ mod tests {
         assert!(claude.detect_completion(r#"{ "type" : "result" }"#));
 
         assert!(!codex.detect_completion("completed"));
+        assert!(codex.detect_completion(r#"{"type":"turn.completed"}"#));
         assert!(codex.detect_completion(r#"{"event":"done"}"#));
         assert!(codex.detect_completion(r#"{"status":"completed"}"#));
         assert!(!codex.detect_completion(r#"{"event":"progress"}"#));
@@ -543,6 +570,17 @@ mod tests {
                 tokens_in: Some(12),
                 tokens_out: Some(7),
                 cost_usd: Some(0.08),
+            })
+        );
+
+        assert_eq!(
+            codex.parse_telemetry(
+                r#"{"type":"turn.completed","usage":{"input_tokens":8008,"cached_input_tokens":7040,"output_tokens":27}}"#,
+            ),
+            Some(ParsedTelemetry {
+                tokens_in: Some(8008),
+                tokens_out: Some(27),
+                cost_usd: None,
             })
         );
     }
