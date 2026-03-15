@@ -86,8 +86,9 @@
 - **Impact:** Low (silent telemetry drops, not data corruption)
 - **Details:** The parser expects exactly `TOKENS in=X out=Y cost=Z`. Case-sensitive prefix match, space-delimited key=value pairs. Not documented as the canonical wire format. When real agents are integrated, their output must match this exact format or telemetry is silently ignored.
 - **Mitigation:** Document the format in AGENTS.md or a dedicated telemetry spec. Consider a more robust parser (JSON lines, structured logging).
+- **Update (Sprint 1):** Parser now supports two formats: `TOKENS in=X out=Y cost=Z` (legacy) and `NEXODE_TELEMETRY:tokens_in=X,tokens_out=X,cost_usd=X` (new). Harness-specific `parse_keyed_telemetry` also handles free-form `key=value` pairs. Still undocumented.
 
-### R-004: Global `AtomicU64` agent IDs not unique across restarts
+### ~~R-004: Global `AtomicU64` agent IDs not unique across restarts~~ ADDRESSED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** `process.rs`
@@ -95,6 +96,7 @@
 - **Impact:** Low (agent ID collisions in logs after restart)
 - **Details:** `AGENT_COUNTER` resets to 1 on daemon restart. Agent IDs like `slot-a-agent-1` will repeat across daemon lifetimes.
 - **Mitigation:** Prefix with daemon instance ID (PID, UUID, or epoch timestamp) when moving to production.
+- **Addressed:** Sprint 1 (2026-03-15). `daemon_instance_id` (UUID v4 prefix) is now prepended to agent IDs via `next_agent_id(prefix, slot_id)`. Format: `{instance_short}-{slot_id}-agent-{counter}`.
 
 ### R-005: Broadcast stream drops lagged events silently
 
@@ -138,3 +140,59 @@
 - **Severity:** Low
 - **Details:** The daemon binary does manual `std::env::args()` parsing with `--flag value` matching, while `nexode-ctl` uses `clap` with derive macros. Minor inconsistency — no `--help` support on the daemon.
 - **When:** Whenever someone touches daemon CLI args.
+
+### I-009: `completion_detected` overrides non-zero exit as success
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-001
+- **Module:** `process.rs:325`
+- **Severity:** Medium
+- **Details:** `success: status.success() || completion_detected` means an agent that prints a completion marker early and then crashes with a non-zero exit code is reported as successful. Could silently promote a crashed agent to REVIEW instead of respawning.
+- **When:** Before real CLI agent testing. Review semantics — consider requiring both `completion_detected && status.success()` for true success.
+
+### I-010: `AgentStateChanged(Executing)` dropped after swap
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-003
+- **Module:** `engine.rs` (SlotAgentSwapped handler)
+- **Severity:** Medium
+- **Details:** The `AgentStateChanged(Executing)` event for the new agent was removed from the `SlotAgentSwapped` handler. After a crash-respawn, gRPC subscribers won't see the new agent enter `Executing` state — only the swap event. Regression from Phase 0 behavior.
+- **When:** Phase 2/3 when TUI or VS Code extension subscribes to agent state changes.
+
+### I-011: Recovery re-enqueues merge slot without worktree check
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-004
+- **Module:** `recovery.rs:107-111`
+- **Severity:** Low
+- **Details:** If the daemon crashes mid-merge (after worktree cleanup but before the WAL write), recovery re-enqueues the slot at the front of the merge queue even though its worktree no longer exists. The merge will then fail at runtime.
+- **When:** When merge reliability matters.
+
+### I-012: Token/byte conflation in `truncate_payload`
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-005
+- **Module:** `context.rs:77-96`
+- **Severity:** Low
+- **Details:** `max_context_tokens` from HarnessConfig is passed as a byte count to `truncate_payload`. Tokens ≠ bytes (~4 bytes/token). Currently `max_context_tokens` is always `None`, so not exercised.
+- **When:** When `max_context_tokens` is actually used.
+
+### I-013: Empty telemetry from malformed `TOKENS` lines
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-008
+- **Module:** `process.rs:396-414`
+- **Severity:** Low
+- **Details:** `parse_space_delimited` returns `Some(ParsedTelemetry { all None })` for lines starting with `TOKENS ` that have no valid key=value pairs. Results in WAL entries with all-zero telemetry.
+- **When:** Low urgency — only affects the legacy `TOKENS` prefix format.
+
+### I-014: Architecture doc CLI flags out of date
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-009
+- **Module:** `docs/architecture/agent-harness.md`
+- **Severity:** Low
+- **Details:** Sprint instructions specified `codex --approval-mode full-auto`, but the implementation uses `codex exec --full-auto --json` (aligned to actual CLI). Architecture doc should be updated to match.
+- **When:** Next docs update by pc.
+
+### I-015: JSON substring matching in completion detection
+
+- **Source:** Sprint 1 review (2026-03-15), finding F-010
+- **Module:** `harness.rs:177-178`
+- **Severity:** Low
+- **Details:** `ClaudeCodeHarness.detect_completion` uses `line.contains("\"type\":\"result\"")` — fragile against whitespace in JSON or the word "completed" in agent output. Combined with I-009, could cause false success.
+- **When:** Before real Claude Code CLI testing.
