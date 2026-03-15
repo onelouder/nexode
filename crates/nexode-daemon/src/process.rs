@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use nexode_proto::SlotAgentSwapped;
@@ -12,13 +15,17 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::{self, Instant};
 
+use crate::harness::AgentHarness;
+
 static AGENT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct AgentProcessSpec {
     pub slot_id: String,
+    pub agent_id_prefix: Option<String>,
     pub worktree_path: PathBuf,
     pub command: AgentCommand,
+    pub harness: Arc<dyn AgentHarness>,
     pub watchdog_timeout: Duration,
     pub watchdog_poll_interval: Duration,
     pub respawn_on_failure: bool,
@@ -29,6 +36,15 @@ pub struct AgentProcessSpec {
 pub struct AgentCommand {
     pub program: OsString,
     pub args: Vec<OsString>,
+    pub env: BTreeMap<String, String>,
+    pub setup_files: Vec<SetupFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupFile {
+    pub relative_path: PathBuf,
+    pub content: String,
+    pub overwrite: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,16 +107,35 @@ pub enum AgentProcessError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to prepare setup file `{path}` for slot `{slot_id}`: {source}")]
+    SetupFile {
+        slot_id: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("failed to await slot supervisor: {0}")]
     Join(#[from] tokio::task::JoinError),
 }
 
 impl AgentCommand {
-    pub fn shell(script: impl AsRef<str>) -> Self {
+    pub fn new(
+        program: impl Into<OsString>,
+        args: impl IntoIterator<Item = impl Into<OsString>>,
+    ) -> Self {
         Self {
-            program: OsString::from("sh"),
-            args: vec![OsString::from("-lc"), OsString::from(script.as_ref())],
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
+            env: BTreeMap::new(),
+            setup_files: Vec::new(),
         }
+    }
+
+    pub fn shell(script: impl AsRef<str>) -> Self {
+        Self::new(
+            "sh",
+            vec![OsString::from("-lc"), OsString::from(script.as_ref())],
+        )
     }
 }
 
@@ -151,7 +186,7 @@ async fn supervise_slot(
     let mut pending_swap: Option<(String, &'static str)> = None;
 
     loop {
-        let agent_id = next_agent_id(&spec.slot_id);
+        let agent_id = next_agent_id(spec.agent_id_prefix.as_deref(), &spec.slot_id);
         if let Some((old_agent_id, reason)) = pending_swap.take() {
             let _ = event_tx.send(AgentProcessEvent::SlotAgentSwapped(SlotAgentSwapped {
                 slot_id: spec.slot_id.clone(),
@@ -231,9 +266,12 @@ async fn run_single_agent(
     event_tx: &mpsc::UnboundedSender<AgentProcessEvent>,
     shutdown_rx: &mut oneshot::Receiver<()>,
 ) -> Result<AgentOutcome, AgentProcessError> {
+    write_setup_files(&spec.slot_id, &spec.worktree_path, &spec.command.setup_files)?;
+
     let mut command = Command::new(&spec.command.program);
     command
         .args(&spec.command.args)
+        .envs(&spec.command.env)
         .current_dir(&spec.worktree_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -261,6 +299,7 @@ async fn run_single_agent(
     }
 
     let mut last_output = Instant::now();
+    let mut completion_detected = false;
     let mut tick = time::interval(spec.watchdog_poll_interval);
     loop {
         tokio::select! {
@@ -270,11 +309,12 @@ async fn run_single_agent(
             }
             Some(line_event) = line_rx.recv() => {
                 last_output = Instant::now();
+                completion_detected |= spec.harness.detect_completion(&line_event.line);
                 let _ = event_tx.send(AgentProcessEvent::Output {
                     slot_id: spec.slot_id.clone(),
                     agent_id: agent_id.to_string(),
                     stream: line_event.stream,
-                    telemetry: ParsedTelemetry::parse(&line_event.line),
+                    telemetry: spec.harness.parse_telemetry(&line_event.line),
                     line: line_event.line,
                 });
             }
@@ -285,7 +325,7 @@ async fn run_single_agent(
                 })? {
                     return Ok(AgentOutcome::Completed {
                         status_code: status.code(),
-                        success: status.success(),
+                        success: status.success() || completion_detected,
                     });
                 }
                 if last_output.elapsed() >= spec.watchdog_timeout {
@@ -333,11 +373,6 @@ fn validate_spec(spec: &AgentProcessSpec) -> Result<(), AgentProcessError> {
     Ok(())
 }
 
-fn next_agent_id(slot_id: &str) -> String {
-    let id = AGENT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{slot_id}-agent-{id}")
-}
-
 #[derive(Debug)]
 struct LineEvent {
     stream: OutputStream,
@@ -356,24 +391,87 @@ enum AgentOutcome {
 
 impl ParsedTelemetry {
     pub fn parse(line: &str) -> Option<Self> {
-        let line = line.strip_prefix("TOKENS ")?;
-        let mut telemetry = ParsedTelemetry {
-            tokens_in: None,
-            tokens_out: None,
-            cost_usd: None,
-        };
-
-        for part in line.split_whitespace() {
-            let (key, value) = part.split_once('=')?;
-            match key {
-                "in" => telemetry.tokens_in = value.parse().ok(),
-                "out" => telemetry.tokens_out = value.parse().ok(),
-                "cost" => telemetry.cost_usd = value.parse().ok(),
-                _ => {}
-            }
+        if let Some(line) = line.strip_prefix("TOKENS ") {
+            return parse_space_delimited(line);
         }
+        if let Some(line) = line.strip_prefix("NEXODE_TELEMETRY:") {
+            return parse_csv(line);
+        }
+        None
+    }
+}
 
-        Some(telemetry)
+fn parse_space_delimited(line: &str) -> Option<ParsedTelemetry> {
+    let mut telemetry = ParsedTelemetry {
+        tokens_in: None,
+        tokens_out: None,
+        cost_usd: None,
+    };
+
+    for part in line.split_whitespace() {
+        let (key, value) = part.split_once('=')?;
+        match key {
+            "in" => telemetry.tokens_in = value.parse().ok(),
+            "out" => telemetry.tokens_out = value.parse().ok(),
+            "cost" => telemetry.cost_usd = value.parse().ok(),
+            _ => {}
+        }
+    }
+
+    Some(telemetry)
+}
+
+fn parse_csv(line: &str) -> Option<ParsedTelemetry> {
+    let mut telemetry = ParsedTelemetry {
+        tokens_in: None,
+        tokens_out: None,
+        cost_usd: None,
+    };
+
+    for part in line.split(',') {
+        let (key, value) = part.split_once('=')?;
+        match key {
+            "tokens_in" => telemetry.tokens_in = value.parse().ok(),
+            "tokens_out" => telemetry.tokens_out = value.parse().ok(),
+            "cost_usd" => telemetry.cost_usd = value.parse().ok(),
+            _ => {}
+        }
+    }
+
+    Some(telemetry)
+}
+
+fn write_setup_files(
+    slot_id: &str,
+    worktree_path: &PathBuf,
+    setup_files: &[SetupFile],
+) -> Result<(), AgentProcessError> {
+    for setup_file in setup_files {
+        let path = worktree_path.join(&setup_file.relative_path);
+        if path.exists() && !setup_file.overwrite {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| AgentProcessError::SetupFile {
+                slot_id: slot_id.to_string(),
+                path: path.clone(),
+                source,
+            })?;
+        }
+        fs::write(&path, &setup_file.content).map_err(|source| AgentProcessError::SetupFile {
+            slot_id: slot_id.to_string(),
+            path,
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+fn next_agent_id(prefix: Option<&str>, slot_id: &str) -> String {
+    let id = AGENT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    match prefix {
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}-{slot_id}-agent-{id}"),
+        _ => format!("{slot_id}-agent-{id}"),
     }
 }
 
@@ -382,6 +480,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    use crate::harness::MockHarness;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::timeout;
@@ -564,8 +663,10 @@ echo "after-timeout"
         ) -> AgentProcessSpec {
             AgentProcessSpec {
                 slot_id: self.slot_id.clone(),
+                agent_id_prefix: None,
                 worktree_path: self.worktree.clone(),
                 command,
+                harness: Arc::new(MockHarness),
                 watchdog_timeout,
                 watchdog_poll_interval: Duration::from_millis(25),
                 respawn_on_failure,

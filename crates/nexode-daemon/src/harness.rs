@@ -1,0 +1,381 @@
+use std::collections::BTreeMap;
+use std::fmt;
+use std::path::Path;
+use std::sync::Arc;
+
+use thiserror::Error;
+
+use crate::context::ContextPayload;
+use crate::process::{AgentCommand, ParsedTelemetry, SetupFile};
+use crate::session::SlotConfig;
+
+const MOCK_TOKENS_IN: u64 = 100;
+const MOCK_TOKENS_OUT: u64 = 25;
+const MOCK_COST_USD: f64 = 0.5;
+
+pub type SharedHarness = Arc<dyn AgentHarness>;
+
+pub trait AgentHarness: Send + Sync + fmt::Debug {
+    fn name(&self) -> &str;
+
+    fn build_command(
+        &self,
+        worktree_path: &Path,
+        task: &str,
+        context: &ContextPayload,
+        config: &HarnessConfig,
+    ) -> Result<AgentCommand, HarnessError>;
+
+    fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry>;
+
+    fn detect_completion(&self, line: &str) -> bool;
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HarnessConfig {
+    pub model: String,
+    pub provider_config: BTreeMap<String, String>,
+    pub timeout_minutes: u64,
+    pub max_context_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HarnessKind {
+    Mock,
+    ClaudeCode,
+    CodexCli,
+}
+
+#[derive(Debug, Error)]
+pub enum HarnessError {
+    #[error("unknown harness `{0}`")]
+    UnknownHarness(String),
+}
+
+#[derive(Debug)]
+pub struct MockHarness;
+
+#[derive(Debug)]
+pub struct ClaudeCodeHarness;
+
+#[derive(Debug)]
+pub struct CodexCliHarness;
+
+pub fn resolve_harness(slot: &SlotConfig) -> Result<SharedHarness, HarnessError> {
+    let kind = infer_harness(slot)?;
+    Ok(match kind {
+        HarnessKind::Mock => Arc::new(MockHarness),
+        HarnessKind::ClaudeCode => Arc::new(ClaudeCodeHarness),
+        HarnessKind::CodexCli => Arc::new(CodexCliHarness),
+    })
+}
+
+pub fn infer_harness(slot: &SlotConfig) -> Result<HarnessKind, HarnessError> {
+    if let Some(harness) = slot.harness.as_deref() {
+        return match harness {
+            "mock" => Ok(HarnessKind::Mock),
+            "claude-code" => Ok(HarnessKind::ClaudeCode),
+            "codex-cli" => Ok(HarnessKind::CodexCli),
+            other => Err(HarnessError::UnknownHarness(other.to_string())),
+        };
+    }
+
+    let model = slot.model.to_ascii_lowercase();
+    if model.contains("mock") {
+        Ok(HarnessKind::Mock)
+    } else if model.contains("claude") {
+        Ok(HarnessKind::ClaudeCode)
+    } else if model.contains("codex") || model.contains("gpt") {
+        Ok(HarnessKind::CodexCli)
+    } else {
+        Err(HarnessError::UnknownHarness(slot.model.clone()))
+    }
+}
+
+impl AgentHarness for MockHarness {
+    fn name(&self) -> &str {
+        "mock"
+    }
+
+    fn build_command(
+        &self,
+        worktree_path: &Path,
+        task: &str,
+        _context: &ContextPayload,
+        _config: &HarnessConfig,
+    ) -> Result<AgentCommand, HarnessError> {
+        let slot_id = worktree_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "slot".to_string());
+        let slot_file = shell_quote(&slot_id);
+        let slot_task = shell_quote(task);
+        let script = format!(
+            "set -eu\nmkdir -p .nexode-mock\nprintf '%s\\n' {slot_task} > .nexode-mock/{slot_file}.txt\ngit add .nexode-mock/{slot_file}.txt\ngit commit -m \"mock update {slot_id}\" >/dev/null\necho \"NEXODE_TELEMETRY:tokens_in={MOCK_TOKENS_IN},tokens_out={MOCK_TOKENS_OUT},cost_usd={MOCK_COST_USD}\"\necho \"completed {slot_id}\"\n"
+        );
+        Ok(AgentCommand::shell(script))
+    }
+
+    fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry> {
+        ParsedTelemetry::parse(line)
+    }
+
+    fn detect_completion(&self, line: &str) -> bool {
+        let line = line.trim();
+        line == "completed" || line.starts_with("completed ")
+    }
+}
+
+impl AgentHarness for ClaudeCodeHarness {
+    fn name(&self) -> &str {
+        "claude-code"
+    }
+
+    fn build_command(
+        &self,
+        _worktree_path: &Path,
+        task: &str,
+        context: &ContextPayload,
+        config: &HarnessConfig,
+    ) -> Result<AgentCommand, HarnessError> {
+        let mut command = AgentCommand::new(
+            "claude",
+            vec![
+                "-p",
+                "--permission-mode",
+                "bypassPermissions",
+                "--model",
+                &config.model,
+                task,
+            ],
+        );
+        if let Some(api_key) = config.provider_config.get("ANTHROPIC_API_KEY") {
+            command.env.insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+        }
+        command.setup_files.push(SetupFile {
+            relative_path: "CLAUDE.md".into(),
+            content: render_context_document(context),
+            overwrite: true,
+        });
+        Ok(command)
+    }
+
+    fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry> {
+        parse_keyed_telemetry(line)
+    }
+
+    fn detect_completion(&self, line: &str) -> bool {
+        line.contains("\"type\":\"result\"") || line.contains("completed")
+    }
+}
+
+impl AgentHarness for CodexCliHarness {
+    fn name(&self) -> &str {
+        "codex-cli"
+    }
+
+    fn build_command(
+        &self,
+        _worktree_path: &Path,
+        task: &str,
+        context: &ContextPayload,
+        config: &HarnessConfig,
+    ) -> Result<AgentCommand, HarnessError> {
+        let mut command = AgentCommand::new(
+            "codex",
+            vec!["exec", "--full-auto", "--json", "--model", &config.model, task],
+        );
+        if let Some(api_key) = config.provider_config.get("OPENAI_API_KEY") {
+            command.env.insert("OPENAI_API_KEY".to_string(), api_key.clone());
+        }
+        command.setup_files.push(SetupFile {
+            relative_path: ".codex/instructions.md".into(),
+            content: render_context_document(context),
+            overwrite: true,
+        });
+        Ok(command)
+    }
+
+    fn parse_telemetry(&self, line: &str) -> Option<ParsedTelemetry> {
+        parse_keyed_telemetry(line).or_else(|| ParsedTelemetry::parse(line))
+    }
+
+    fn detect_completion(&self, line: &str) -> bool {
+        line.contains("\"completed\"") || line.contains("\"event\":\"done\"")
+    }
+}
+
+fn parse_keyed_telemetry(line: &str) -> Option<ParsedTelemetry> {
+    let mut telemetry = ParsedTelemetry {
+        tokens_in: None,
+        tokens_out: None,
+        cost_usd: None,
+    };
+    let mut found = false;
+
+    for part in line
+        .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == '{' || ch == '}' || ch == '"')
+    {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        match key {
+            "tokens_in" | "in" => {
+                telemetry.tokens_in = value.parse().ok();
+                found = true;
+            }
+            "tokens_out" | "out" => {
+                telemetry.tokens_out = value.parse().ok();
+                found = true;
+            }
+            "cost_usd" | "cost" => {
+                telemetry.cost_usd = value.parse().ok();
+                found = true;
+            }
+            _ => {}
+        }
+    }
+
+    found.then_some(telemetry)
+}
+
+fn render_context_document(context: &ContextPayload) -> String {
+    let mut lines = vec![
+        "# Task".to_string(),
+        context.task_description.clone(),
+        String::new(),
+        "# Include Files".to_string(),
+    ];
+
+    if context.include_files.is_empty() {
+        lines.push("(none)".to_string());
+    } else {
+        for path in &context.include_files {
+            lines.push(format!("- {}", path.display()));
+        }
+    }
+
+    lines.push(String::new());
+    lines.push("# Exclude Patterns".to_string());
+    if context.exclude_patterns.is_empty() {
+        lines.push("(none)".to_string());
+    } else {
+        for pattern in &context.exclude_patterns {
+            lines.push(format!("- {pattern}"));
+        }
+    }
+
+    if let Some(diff) = context.recent_diff.as_ref() {
+        lines.push(String::new());
+        lines.push("# Recent Diff".to_string());
+        lines.push(diff.clone());
+    }
+
+    if let Some(readme) = context.project_readme.as_ref() {
+        lines.push(String::new());
+        lines.push("# README".to_string());
+        lines.push(readme.clone());
+    }
+
+    lines.join("\n")
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexode_proto::AgentMode;
+
+    use crate::context::ContextPayload;
+    use crate::session::{ContextConfig, SlotConfig};
+
+    #[test]
+    fn model_and_override_select_expected_harnesses() {
+        let slot = base_slot("claude-sonnet-4-6");
+        assert_eq!(infer_harness(&slot).expect("infer harness"), HarnessKind::ClaudeCode);
+
+        let mut slot = base_slot("gpt-4.1");
+        slot.harness = Some("mock".to_string());
+        assert_eq!(infer_harness(&slot).expect("explicit harness"), HarnessKind::Mock);
+
+        let slot = base_slot("codex");
+        assert_eq!(infer_harness(&slot).expect("infer harness"), HarnessKind::CodexCli);
+    }
+
+    #[test]
+    fn claude_command_writes_claude_md_and_uses_print_mode() {
+        let harness = ClaudeCodeHarness;
+        let command = harness
+            .build_command(
+                Path::new("."),
+                "Implement auth",
+                &sample_context(),
+                &HarnessConfig {
+                    model: "claude-sonnet-4-6".to_string(),
+                    provider_config: BTreeMap::new(),
+                    timeout_minutes: 30,
+                    max_context_tokens: None,
+                },
+            )
+            .expect("build claude command");
+
+        assert_eq!(command.program.to_string_lossy(), "claude");
+        assert!(command.args.iter().any(|arg| arg == "-p"));
+        assert!(command
+            .setup_files
+            .iter()
+            .any(|file| file.relative_path == Path::new("CLAUDE.md")));
+    }
+
+    #[test]
+    fn codex_command_writes_codex_instructions_and_uses_exec() {
+        let harness = CodexCliHarness;
+        let command = harness
+            .build_command(
+                Path::new("."),
+                "Implement auth",
+                &sample_context(),
+                &HarnessConfig {
+                    model: "gpt-5-codex".to_string(),
+                    provider_config: BTreeMap::new(),
+                    timeout_minutes: 30,
+                    max_context_tokens: None,
+                },
+            )
+            .expect("build codex command");
+
+        assert_eq!(command.program.to_string_lossy(), "codex");
+        assert_eq!(command.args[0].to_string_lossy(), "exec");
+        assert!(command
+            .setup_files
+            .iter()
+            .any(|file| file.relative_path == Path::new(".codex/instructions.md")));
+    }
+
+    fn base_slot(model: &str) -> SlotConfig {
+        SlotConfig {
+            id: "slot-a".to_string(),
+            task: "Implement auth".to_string(),
+            model: model.to_string(),
+            harness: None,
+            mode: AgentMode::Plan,
+            branch: "agent/slot-a".to_string(),
+            timeout_minutes: 30,
+            provider_config: BTreeMap::new(),
+            context: ContextConfig::default(),
+        }
+    }
+
+    fn sample_context() -> ContextPayload {
+        ContextPayload {
+            task_description: "Implement auth".to_string(),
+            include_files: Vec::new(),
+            exclude_patterns: vec!["target/**".to_string()],
+            recent_diff: Some("diff --git".to_string()),
+            project_readme: Some("README".to_string()),
+        }
+    }
+}
