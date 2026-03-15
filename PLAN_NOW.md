@@ -14,24 +14,24 @@
 
 ### Week 1: WAL Recovery
 
-- [ ] Read sprint docs: `.agents/CODEX-SPRINT-1.md`, `docs/architecture/wal-recovery.md`, `docs/architecture/agent-harness.md`
-- [ ] Create branch `agent/gpt/sprint-1-wal-harness`
-- [ ] Add dependencies: `bincode`, `sha2`, `crc32fast`, `uuid`, `async-trait`, `glob`
-- [ ] Implement WAL persistence layer (`crates/nexode-daemon/src/wal.rs`) — framed binary format, CRC integrity, fsync writes
-- [ ] Implement recovery logic (`crates/nexode-daemon/src/recovery.rs`) — checkpoint scan, WAL replay, PID checks, worktree verification
-- [ ] Integrate WAL into `DaemonEngine` — write entries on state changes, periodic checkpoint, recovery-or-bootstrap startup
-- [ ] WAL tests — checkpoint round-trip, WAL replay ordering, CRC corruption detection, config drift handling
+- [x] Read sprint docs: `.agents/CODEX-SPRINT-1.md`, `docs/architecture/wal-recovery.md`, `docs/architecture/agent-harness.md`
+- [x] Create branch `agent/gpt/sprint-1-wal-harness`
+- [x] Add dependencies: `bincode`, `sha2`, `crc32fast`, `uuid`, `async-trait`, `glob`
+- [x] Implement WAL persistence layer (`crates/nexode-daemon/src/wal.rs`) — framed binary format, CRC integrity, fsync writes
+- [x] Implement recovery logic (`crates/nexode-daemon/src/recovery.rs`) — checkpoint scan, WAL replay, PID checks, worktree verification
+- [x] Integrate WAL into `DaemonEngine` — write entries on state changes, periodic checkpoint, recovery-or-bootstrap startup
+- [x] WAL tests — checkpoint round-trip, WAL replay ordering, CRC corruption detection, config drift handling
 
 ### Week 2: Agent Harness + Context Compiler
 
-- [ ] Define `AgentHarness` trait in `crates/nexode-daemon/src/harness.rs`
-- [ ] Refactor `build_mock_agent_command` into `MockHarness` implementing the trait
-- [ ] Implement `ClaudeCodeHarness` — `claude --print` invocation, CLAUDE.md context injection, telemetry parsing
-- [ ] Implement `CodexCliHarness` — `codex --approval-mode full-auto` invocation, .codex context injection
-- [ ] Implement basic context compiler (`crates/nexode-daemon/src/context.rs`) — task + globs + git diff + README
-- [ ] Wire harness selection into engine (`start_slot` resolves harness from model/config)
-- [ ] Add `harness` field to session.yaml slot config (optional, backward compatible)
-- [ ] Harness tests — MockHarness backward compat, context compiler, harness selection, command shape validation
+- [x] Define `AgentHarness` trait in `crates/nexode-daemon/src/harness.rs`
+- [x] Refactor `build_mock_agent_command` into `MockHarness` implementing the trait
+- [x] Implement `ClaudeCodeHarness` — `claude --print` invocation, CLAUDE.md context injection, telemetry parsing
+- [x] Implement `CodexCliHarness` — `codex exec --full-auto --json` invocation, `.codex/instructions.md` context injection
+- [x] Implement basic context compiler (`crates/nexode-daemon/src/context.rs`) — task + globs + git diff + README
+- [x] Wire harness selection into engine (`start_slot` resolves harness from model/config)
+- [x] Add `harness` field to session.yaml slot config (optional, backward compatible)
+- [x] Harness tests — MockHarness backward compat, context compiler, harness selection, command shape validation
 
 ## Blocked
 
@@ -39,7 +39,23 @@
 
 ## Done This Sprint
 
-(Items move here as they're completed)
+- Added `wal.rs` with framed binary WAL storage, CRC validation, replay, and compaction.
+- Added `recovery.rs` with checkpoint serialization, WAL replay, config-drift warnings, worktree verification, and Option A PID kill-and-respawn recovery.
+- Added `context.rs` with task/include/exclude/git diff/README context compilation.
+- Added `harness.rs` with `MockHarness`, `ClaudeCodeHarness`, and `CodexCliHarness`.
+- Kept the harness API synchronous and removed async case handling from this layer; process supervision remains in `process.rs`.
+- Extended `session.rs` with optional slot-level `harness` and `session_config_hash()`.
+- Refactored `process.rs` so harnesses provide commands, env, setup files, telemetry parsing, and completion detection.
+- Wired WAL, recovery, harness selection, context compilation, and checkpointing into `engine.rs`.
+- Fixed recovery bootstrap so recovered `Review`/`Done` slots are preserved and only `Pending` or restart-required slots are relaunched.
+- Added daemon-level recovery coverage for preserved review state across restart.
+- Verification is green: `cargo test -p nexode-daemon` and `cargo check --workspace`.
+
+## Next Up
+
+- Push the branch and open Sprint 1 review.
+- Optional follow-up: add an opt-in live CLI smoke test path for installed `claude`/`codex` binaries.
+- Optional follow-up: add a daemon-level respawn integration test for a crash during `WORKING` if we introduce a controllable long-running test harness.
 
 ## Notes
 

@@ -1,65 +1,77 @@
 ---
 agent: gpt
-status: ready
-from: pc
-timestamp: 2026-03-15T00:17:00-07:00
+status: review
+from: gpt
+timestamp: 2026-03-15T08:11:49-07:00
 task: "Sprint 1 — WAL Recovery + Agent Harness"
+branch: "agent/gpt/sprint-1-wal-harness"
 ---
 
-# Handoff: pc → gpt (Codex)
+# Handoff: Sprint 1 Progress
 
-## What This Sprint Delivers
+## What Landed
 
-Two capabilities that take Nexode from "validated spike" to "usable tool":
+- `crates/nexode-daemon/src/wal.rs`
+  - Framed append-only WAL at `.nexode/wal.binlog`
+  - Entry CRC validation, ordered replay, checkpoint compaction
+- `crates/nexode-daemon/src/recovery.rs`
+  - Checkpoint serialization/deserialization
+  - WAL replay into persisted runtime state
+  - Config drift warning
+  - Missing worktree cleanup
+  - Option A recovery: kill surviving PID and restart `WORKING` slot
+- `crates/nexode-daemon/src/context.rs`
+  - Task/include/exclude/git diff/README context compiler
+- `crates/nexode-daemon/src/harness.rs`
+  - `AgentHarness` trait
+  - `MockHarness`, `ClaudeCodeHarness`, `CodexCliHarness`
+  - Harness inference and explicit override handling
+  - Async harness cases intentionally eliminated; harness construction/parsing stays synchronous
+- `crates/nexode-daemon/src/session.rs`
+  - Optional `slot.harness`
+  - `session_config_hash()` for WAL session drift detection
+- `crates/nexode-daemon/src/process.rs`
+  - Harness-driven command/env/setup-file execution
+  - Harness telemetry parsing + completion detection
+- `crates/nexode-daemon/src/engine.rs`
+  - Recovery-or-bootstrap startup path
+  - WAL writes for slot state, telemetry, merge outcomes
+  - Periodic checkpoints
+  - Harness/context-based `start_slot()`
+  - Recovery-aware bootstrap that preserves recovered `Review`/`Done` state
 
-1. **WAL-based crash recovery** — daemon persists runtime state to disk, survives restarts, recovers slot state and cost totals
-2. **Agent Harness abstraction** — trait-based adapter layer replacing mock scripts, enabling real Claude Code and Codex CLI agents
-3. **Basic context compiler** — assembles task description, file globs, and git diff into context payload for agent dispatch
+## Verification
 
-## What Was Done (pc, Sprint 1 Prep)
+- `cargo test -p nexode-daemon`
+  - 35 tests passing
+- `cargo check --workspace`
+  - passing
 
-1. **Phase 0 code review** — reviewed all 3 Codex commits, verified 6/6 exit criteria met
-2. **ISSUES.md** — cataloged 8 issues (I-001 through I-008) and 7 risks (R-001 through R-007); 4 issues resolved, 4 remaining low-priority
-3. **Merged Phase 0** — squash-merged PR #6 (Codex spike) and PR #5 (ISSUES.md) into main
-4. **Sprint 1 architecture** — wrote `docs/architecture/wal-recovery.md` (WAL format, recovery protocol, compaction strategy) and `docs/architecture/agent-harness.md` (trait design, harness implementations, context compiler)
-5. **Sprint 1 instructions** — wrote `.agents/CODEX-SPRINT-1.md` with full task breakdown, exit criteria, and dependency list
-6. **Updated PLAN_NOW.md, ROADMAP.md** — Sprint 1 tasks and milestone tracking
+Key coverage now includes:
 
-## What to Do (gpt/Codex)
+- WAL framing / CRC / compaction
+- Recovery replay / config drift / PID restart planning
+- Context compiler
+- Harness selection and command shape
+- Mock harness backward compatibility through engine integration
+- Daemon restart preserving recovered `Review` state without relaunching the slot
 
-Read `.agents/CODEX-SPRINT-1.md` for full instructions. Key points:
+## Important Notes
 
-- **Branch:** `agent/gpt/sprint-1-wal-harness`
-- **Week 1:** WAL persistence + recovery + engine integration + tests
-- **Week 2:** AgentHarness trait + MockHarness + ClaudeCodeHarness + CodexCliHarness + context compiler + harness selection + tests
-- **New dependencies:** `bincode`, `sha2`, `crc32fast`, `uuid`, `async-trait`, `glob`
-- **6 exit criteria** defined in sprint doc — all must pass
+- Real harness command shapes were aligned to local CLI help:
+  - `claude -p --permission-mode bypassPermissions --model ...`
+  - `codex exec --full-auto --json --model ...`
+- The harness layer is intentionally synchronous.
+  - No `async-trait` or async case handling remains in the harness API.
+  - Process lifecycle and streaming stay in `process.rs`; harnesses only build commands and parse lines.
+- Engine tests that previously relied on the old mock-only launcher now specify `harness: "mock"` explicitly so Sprint 1 inference does not invoke real CLIs during test runs.
+- The new recovery bootstrap logic only relaunches:
+  - slots explicitly marked for restart by recovery
+  - slots that are still `Pending` after replay
+  - recovered `Review`, `Done`, `Paused`, `Resolving`, `Archived`, and `MergeQueue` states are preserved
 
-## Files to Read First
+## Remaining Follow-Ups
 
-1. `AGENTS.md` — Rules, capabilities, git conventions
-2. `.agents/CODEX-SPRINT-1.md` — Full sprint instructions (start here)
-3. `docs/architecture/wal-recovery.md` — WAL format and recovery protocol
-4. `docs/architecture/agent-harness.md` — Harness trait design and implementations
-5. `DECISIONS.md` — All accepted architectural decisions (D-002 through D-010)
-6. `ISSUES.md` — Open issues and risks from Phase 0
-
-## Files NOT to Modify
-
-- `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*` — pc's domain
-
-## Key Technical Decisions
-
-- **WAL file:** `.nexode/wal.binlog`, framed `[u32 len][u32 crc][payload]`, bincode serialization
-- **Recovery:** Option A — kill + respawn surviving agents (don't re-attach via PID)
-- **Checkpoint interval:** 60 seconds, full RuntimeState snapshot
-- **Harness trait:** Stateless, synchronous `build_command` + line-oriented `parse_telemetry`/`detect_completion`
-- **Context compiler:** Minimal Phase 1 — task + globs + git diff + README, no AST/embeddings
-- **Harness selection:** Infer from `model` field, optional explicit `harness` override in session.yaml
-
-## Open Issues (Low Priority, Not Sprint Blocking)
-
-- I-004: `provider_config` shallow merge
-- I-005: SQLite schema has no migration versioning
-- I-007: Merge queue drains on tick only (2s delay)
-- I-008: Manual arg parsing vs clap in daemon main.rs
+- Branch should be pushed and reviewed from `agent/gpt/sprint-1-wal-harness`.
+- Optional: add opt-in live smoke tests for installed `claude` / `codex`.
+- Optional: add a daemon-level crash-recovery integration test for a slot that is still `WORKING` at crash time using a controllable long-running harness fixture.

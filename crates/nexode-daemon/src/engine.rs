@@ -9,38 +9,44 @@ use nexode_proto::hypervisor_event;
 use nexode_proto::operator_command;
 use nexode_proto::{
     AgentMode, AgentSlot, AgentState, AgentStateChanged, AgentTelemetryUpdated, FullStateSnapshot,
-    HypervisorEvent, OperatorCommand, Project, ProjectBudgetAlert, TaskNode, TaskStatus,
+    HypervisorEvent, OperatorCommand, Project, ProjectBudgetAlert, SlotAgentSwapped, TaskNode, TaskStatus,
     TaskStatusChanged, WorktreeStatusChanged,
 };
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{self, MissedTickBehavior};
+use uuid::Uuid;
 
 use crate::accounting::{
     TokenAccountingHandle, TokenAccountingServiceError, TokenAccountantError, TokenUsageRecord,
     UsageUpdate,
 };
+use crate::context::{ContextError, compile_context};
 use crate::git::{GitWorktreeError, GitWorktreeOrchestrator};
+use crate::harness::{HarnessConfig, HarnessError, resolve_harness};
 use crate::process::{
-    AgentCommand, AgentProcessError, AgentProcessEvent, AgentProcessManager, AgentProcessSpec,
+    AgentProcessError, AgentProcessEvent, AgentProcessManager, AgentProcessSpec,
     OutputStream, ParsedTelemetry, SlotSupervisor,
 };
+use crate::recovery::{
+    PersistedProjectState, PersistedRuntimeState, PersistedSlotState, RecoveryError,
+    RestartSlot, recover_from_wal, serialize_checkpoint,
+};
 use crate::session::{
-    BudgetConfig, ProjectConfig, SessionConfig, SessionConfigError, SlotConfig, VerifyConfig,
-    load_session_config,
+    BudgetConfig, ContextConfig, EffectiveDefaults, ProjectConfig, SessionConfig,
+    SessionConfigError, SlotConfig, VerifyConfig, load_session_config, session_config_hash,
 };
 use crate::transport::{CommandReceiver, GrpcBridge, HypervisorService};
+use crate::wal::{MergeOutcomeTag, Wal, WalError, WalEntry, resolve_wal_path};
 
 const DEFAULT_LISTEN_ADDR: &str = "127.0.0.1:50051";
 const DEFAULT_TICK_INTERVAL: Duration = Duration::from_secs(2);
+const DEFAULT_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(300);
 const DEFAULT_WATCHDOG_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DEFAULT_ACCOUNTING_DB: &str = ".nexode/token-accounting.sqlite3";
 const DEFAULT_TARGET_BRANCH: &str = "main";
-const MOCK_TOKENS_IN: u64 = 100;
-const MOCK_TOKENS_OUT: u64 = 25;
-const MOCK_COST_USD: f64 = 0.5;
 
 static EVENT_COUNTER: AtomicU64 = AtomicU64::new(1);
 static BARRIER_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -51,6 +57,7 @@ pub struct DaemonConfig {
     pub listen_addr: SocketAddr,
     pub accounting_db_path: PathBuf,
     pub tick_interval: Duration,
+    pub checkpoint_interval: Duration,
     pub verification_timeout: Duration,
 }
 
@@ -63,6 +70,7 @@ impl DaemonConfig {
                 .expect("default daemon listen address is valid"),
             accounting_db_path: PathBuf::from(DEFAULT_ACCOUNTING_DB),
             tick_interval: DEFAULT_TICK_INTERVAL,
+            checkpoint_interval: DEFAULT_CHECKPOINT_INTERVAL,
             verification_timeout: DEFAULT_VERIFICATION_TIMEOUT,
         }
     }
@@ -77,15 +85,23 @@ pub enum DaemonError {
     #[error(transparent)]
     AccountingService(#[from] TokenAccountingServiceError),
     #[error(transparent)]
+    Context(#[from] ContextError),
+    #[error(transparent)]
     Git(#[from] GitWorktreeError),
     #[error(transparent)]
+    Harness(#[from] HarnessError),
+    #[error(transparent)]
     Process(#[from] AgentProcessError),
+    #[error(transparent)]
+    Recovery(#[from] RecoveryError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Transport(#[from] tonic::transport::Error),
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Wal(#[from] WalError),
     #[error("duplicate slot id `{slot_id}` across multiple projects")]
     DuplicateSlotId { slot_id: String },
     #[error("project `{project_id}` is missing a repository path")]
@@ -113,12 +129,29 @@ pub async fn run_daemon_with_listener(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), DaemonError> {
     let session = load_session_config(&config.session_path)?;
+    let session_hash = session_config_hash(&config.session_path)?;
     let db_path = resolve_accounting_path(&config.session_path, &config.accounting_db_path);
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let wal_path = resolve_wal_path(&config.session_path);
+    let wal = Wal::open(&wal_path)?;
+    let recovery_plan = recover_from_wal(&wal, session_hash)?;
+    if let Some(plan) = recovery_plan.as_ref() {
+        for warning in &plan.warnings {
+            eprintln!("recovery: {warning}");
+        }
+    }
+    let state = match recovery_plan.as_ref() {
+        Some(plan) => RuntimeState::from_recovered_session(
+            session.clone(),
+            config.verification_timeout,
+            &plan.state,
+        )?,
+        None => RuntimeState::from_session(session.clone(), config.verification_timeout)?,
+    };
 
-    let initial_state = build_initial_snapshot(&session);
+    let initial_state = state.snapshot();
     let bridge = GrpcBridge::new(initial_state);
     let (service, command_rx) = bridge.into_parts();
     let accounting = TokenAccountingHandle::start(&db_path)?;
@@ -140,7 +173,25 @@ pub async fn run_daemon_with_listener(
             .await
     });
 
-    let mut engine = match DaemonEngine::bootstrap(session, config, service, command_rx, accounting).await {
+    let recovered = recovery_plan.is_some();
+    let restart_slots = recovery_plan
+        .map(|plan| plan.restart_slots)
+        .unwrap_or_default();
+    let daemon_instance_id = Uuid::new_v4().simple().to_string()[..8].to_string();
+    let mut engine = match DaemonEngine::bootstrap(
+        config,
+        service,
+        command_rx,
+        accounting,
+        wal,
+        daemon_instance_id,
+        session_hash,
+        state,
+        restart_slots,
+        recovered,
+    )
+    .await
+    {
         Ok(engine) => engine,
         Err(error) => {
             eprintln!("daemon bootstrap failed: {error}");
@@ -169,18 +220,24 @@ struct DaemonEngine {
     process_tx: mpsc::UnboundedSender<AgentProcessEvent>,
     process_manager: AgentProcessManager,
     accounting: TokenAccountingHandle,
+    wal: Wal,
+    daemon_instance_id: String,
     state: RuntimeState,
 }
 
 impl DaemonEngine {
     async fn bootstrap(
-        session: SessionConfig,
         config: DaemonConfig,
         service: HypervisorService,
         command_rx: CommandReceiver,
         accounting: TokenAccountingHandle,
+        wal: Wal,
+        daemon_instance_id: String,
+        session_hash: [u8; 32],
+        state: RuntimeState,
+        restart_slots: Vec<RestartSlot>,
+        recovered: bool,
     ) -> Result<Self, DaemonError> {
-        let state = RuntimeState::from_session(session, config.verification_timeout)?;
         let (process_tx, process_rx) = mpsc::unbounded_channel();
         let process_manager = AgentProcessManager::new();
         let mut engine = Self {
@@ -191,13 +248,53 @@ impl DaemonEngine {
             process_tx,
             process_manager,
             accounting,
+            wal,
+            daemon_instance_id: daemon_instance_id.clone(),
             state,
         };
 
+        engine.wal.append(&WalEntry::SessionStarted {
+            timestamp_ms: now_ms(),
+            session_config_hash: session_hash,
+            daemon_instance_id,
+        })?;
         engine.sync_snapshot().await;
-        let slot_ids = engine.state.slot_ids();
-        for slot_id in slot_ids {
-            engine.start_slot(&slot_id).await?;
+        if !recovered {
+            let slot_ids = engine.state.slot_ids();
+            for slot_id in slot_ids {
+                engine.start_slot(&slot_id).await?;
+            }
+        } else {
+            let restart_slot_ids = restart_slots
+                .iter()
+                .map(|restart| restart.slot_id.clone())
+                .collect::<Vec<_>>();
+            for restart in restart_slots {
+                if let Some(slot) = engine.slot_mut(&restart.slot_id) {
+                    slot.pending_swap_from = restart.previous_agent_id.clone();
+                    slot.current_agent_id = restart.previous_agent_id;
+                    slot.current_agent_pid = None;
+                }
+                engine.start_slot(&restart.slot_id).await?;
+            }
+            let pending_slots = engine
+                .state
+                .projects
+                .values()
+                .flat_map(|project| project.slots.values())
+                .filter(|slot| {
+                    slot.task_status == TaskStatus::Pending
+                        && !restart_slot_ids.iter().any(|slot_id| slot_id == &slot.id)
+                })
+                .map(|slot| slot.id.clone())
+                .collect::<Vec<_>>();
+            for slot_id in pending_slots {
+                engine.start_slot(&slot_id).await?;
+            }
+        }
+
+        if engine.config.checkpoint_interval.is_zero() {
+            engine.write_checkpoint()?;
         }
 
         Ok(engine)
@@ -206,6 +303,11 @@ impl DaemonEngine {
     async fn run(&mut self, mut shutdown_rx: watch::Receiver<bool>) -> Result<(), DaemonError> {
         let mut tick = time::interval(self.config.tick_interval);
         tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut checkpoint_tick = (!self.config.checkpoint_interval.is_zero()).then(|| {
+            let mut interval = time::interval(self.config.checkpoint_interval);
+            interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            interval
+        });
 
         loop {
             tokio::select! {
@@ -220,6 +322,15 @@ impl DaemonEngine {
                 }
                 _ = tick.tick() => {
                     self.drain_merge_queues().await?;
+                }
+                _ = async {
+                    if let Some(interval) = checkpoint_tick.as_mut() {
+                        interval.tick().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    self.write_checkpoint()?;
                 }
             }
         }
@@ -241,14 +352,14 @@ impl DaemonEngine {
             }
             operator_command::Action::KillProject(kill_project) => {
                 self.kill_project(&kill_project.project_id, TaskStatus::Archived)
-                    .await;
+                    .await?;
             }
             operator_command::Action::SlotDispatch(dispatch) => {
                 self.dispatch_slot(&dispatch.slot_id, &dispatch.raw_nl).await?;
             }
             operator_command::Action::PauseAgent(pause) => {
                 if let Some(slot_id) = self.find_slot_by_agent(&pause.agent_id) {
-                    self.pause_slot(&slot_id).await;
+                    self.pause_slot(&slot_id).await?;
                 }
             }
             operator_command::Action::ResumeAgent(resume) => {
@@ -258,7 +369,7 @@ impl DaemonEngine {
             }
             operator_command::Action::KillAgent(kill) => {
                 if let Some(slot_id) = self.find_slot_by_agent(&kill.agent_id) {
-                    self.kill_slot(&slot_id, TaskStatus::Archived).await;
+                    self.kill_slot(&slot_id, TaskStatus::Archived).await?;
                 }
             }
             operator_command::Action::SetAgentMode(set_mode) => {
@@ -277,19 +388,19 @@ impl DaemonEngine {
     async fn move_task(&mut self, task_id: &str, target: TaskStatus) -> Result<(), DaemonError> {
         match target {
             TaskStatus::MergeQueue => {
-                self.enqueue_merge(task_id);
+                self.enqueue_merge(task_id)?;
             }
             TaskStatus::Working => {
                 self.start_slot(task_id).await?;
             }
             TaskStatus::Paused => {
-                self.pause_slot(task_id).await;
+                self.pause_slot(task_id).await?;
             }
             TaskStatus::Archived => {
-                self.kill_slot(task_id, TaskStatus::Archived).await;
+                self.kill_slot(task_id, TaskStatus::Archived).await?;
             }
             TaskStatus::Review | TaskStatus::Resolving | TaskStatus::Done | TaskStatus::Pending => {
-                self.set_task_status(task_id, target, None, None);
+                self.set_task_status(task_id, target, None, None)?;
             }
             TaskStatus::Unspecified => {}
         }
@@ -306,23 +417,29 @@ impl DaemonEngine {
         self.start_slot(slot_id).await
     }
 
-    async fn pause_slot(&mut self, slot_id: &str) {
+    async fn pause_slot(&mut self, slot_id: &str) -> Result<(), DaemonError> {
         let supervisor = self.slot_mut(slot_id).and_then(|slot| slot.supervisor.take());
         if let Some(supervisor) = supervisor {
             let _ = supervisor.shutdown().await;
         }
-        self.set_task_status(slot_id, TaskStatus::Paused, None, None);
+        if let Some(slot) = self.slot_mut(slot_id) {
+            slot.current_agent_pid = None;
+        }
+        self.set_task_status(slot_id, TaskStatus::Paused, None, None)
     }
 
-    async fn kill_slot(&mut self, slot_id: &str, status: TaskStatus) {
+    async fn kill_slot(&mut self, slot_id: &str, status: TaskStatus) -> Result<(), DaemonError> {
         let supervisor = self.slot_mut(slot_id).and_then(|slot| slot.supervisor.take());
         if let Some(supervisor) = supervisor {
             let _ = supervisor.shutdown().await;
         }
-        self.set_task_status(slot_id, status, None, None);
+        if let Some(slot) = self.slot_mut(slot_id) {
+            slot.current_agent_pid = None;
+        }
+        self.set_task_status(slot_id, status, None, None)
     }
 
-    async fn kill_project(&mut self, project_id: &str, status: TaskStatus) {
+    async fn kill_project(&mut self, project_id: &str, status: TaskStatus) -> Result<(), DaemonError> {
         let mut supervisors = Vec::new();
         for slot_id in self.state.project_slot_ids(project_id) {
             if let Some(slot) = self.slot_mut(&slot_id) {
@@ -330,12 +447,14 @@ impl DaemonEngine {
                     supervisors.push(supervisor);
                 }
                 slot.current_agent_id = None;
+                slot.current_agent_pid = None;
             }
-            self.set_task_status(&slot_id, status, None, None);
+            self.set_task_status(&slot_id, status, None, None)?;
         }
         for supervisor in supervisors {
             let _ = supervisor.shutdown().await;
         }
+        Ok(())
     }
 
     fn set_agent_mode(&mut self, agent_id: &str, raw_mode: i32) {
@@ -385,11 +504,51 @@ impl DaemonEngine {
             worktree_path
         };
 
-        let command = build_mock_agent_command(slot_id, &slot_details.task);
+        let slot_config = SlotConfig {
+            id: slot_details.slot_id.clone(),
+            task: slot_details.task.clone(),
+            model: slot_details.model.clone(),
+            harness: slot_details.harness.clone(),
+            mode: slot_details.mode,
+            branch: slot_details.branch.clone(),
+            timeout_minutes: slot_details.timeout_minutes,
+            provider_config: slot_details.provider_config.clone(),
+            context: slot_details.context.clone(),
+        };
+        let project_config = ProjectConfig {
+            id: slot_details.project_id.clone(),
+            repo: Some(slot_details.repo_path.clone()),
+            display_name: slot_details.project_id.clone(),
+            color: None,
+            tags: Vec::new(),
+            budget: slot_details.budget.clone(),
+            verify: slot_details.verify.clone(),
+            defaults: EffectiveDefaults {
+                model: slot_details.model.clone(),
+                mode: slot_details.mode,
+                timeout_minutes: slot_details.timeout_minutes,
+                provider_config: slot_details.provider_config.clone(),
+                context: slot_details.context.clone(),
+            },
+            slots: vec![slot_config.clone()],
+        };
+        let harness = resolve_harness(&slot_config)?;
+        let harness_config = HarnessConfig {
+            model: slot_details.model.clone(),
+            provider_config: slot_details.provider_config.clone(),
+            timeout_minutes: slot_details.timeout_minutes,
+            max_context_tokens: None,
+        };
+        let context =
+            compile_context(&worktree_path, &slot_config, &project_config, &harness_config)?;
+        let command =
+            harness.build_command(&worktree_path, &slot_details.task, &context, &harness_config)?;
         let spec = AgentProcessSpec {
             slot_id: slot_id.to_string(),
+            agent_id_prefix: Some(self.daemon_instance_id.clone()),
             worktree_path,
             command,
+            harness,
             watchdog_timeout: Duration::from_secs(slot_details.timeout_minutes.saturating_mul(60)),
             watchdog_poll_interval: DEFAULT_WATCHDOG_POLL_INTERVAL,
             respawn_on_failure: true,
@@ -402,7 +561,7 @@ impl DaemonEngine {
         if let Some(slot) = self.slot_mut(slot_id) {
             slot.supervisor = Some(supervisor);
         }
-        self.set_task_status(slot_id, TaskStatus::Working, None, None);
+        self.set_task_status(slot_id, TaskStatus::Working, None, None)?;
         self.sync_snapshot().await;
         Ok(())
     }
@@ -412,10 +571,24 @@ impl DaemonEngine {
             AgentProcessEvent::Spawned {
                 slot_id,
                 agent_id,
-                ..
+                pid,
             } => {
+                let mut recovery_swap = None;
                 if let Some(slot) = self.slot_mut(&slot_id) {
                     slot.current_agent_id = Some(agent_id.clone());
+                    slot.current_agent_pid = pid;
+                    recovery_swap = slot.pending_swap_from.take().map(|old_agent_id| {
+                        SlotAgentSwapped {
+                            slot_id: slot_id.clone(),
+                            old_agent_id,
+                            new_agent_id: agent_id.clone(),
+                            reason: "crash_recovery".to_string(),
+                        }
+                    });
+                }
+                self.append_current_slot_state(&slot_id)?;
+                if let Some(swapped) = recovery_swap {
+                    self.publish_event(hypervisor_event::Payload::SlotAgentSwapped(swapped), None);
                 }
                 self.publish_event(
                     hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
@@ -452,9 +625,13 @@ impl DaemonEngine {
                 ..
             } => {
                 if success {
+                    let mut mode = AgentMode::Plan;
                     if let Some(slot) = self.slot_mut(&slot_id) {
                         slot.supervisor = None;
+                        slot.current_agent_pid = None;
+                        mode = slot.mode;
                     }
+                    self.append_current_slot_state(&slot_id)?;
                     self.publish_event(
                         hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                             agent_id: agent_id.clone(),
@@ -462,16 +639,16 @@ impl DaemonEngine {
                         }),
                         None,
                     );
-                    let mode = self
-                        .slot_mut(&slot_id)
-                        .map(|slot| slot.mode)
-                        .unwrap_or(AgentMode::Plan);
                     if mode == AgentMode::FullAuto {
-                        self.enqueue_merge(&slot_id);
+                        self.enqueue_merge(&slot_id)?;
                     } else {
-                        self.set_task_status(&slot_id, TaskStatus::Review, Some(agent_id), None);
+                        self.set_task_status(&slot_id, TaskStatus::Review, Some(agent_id), None)?;
                     }
                 } else {
+                    if let Some(slot) = self.slot_mut(&slot_id) {
+                        slot.current_agent_pid = None;
+                    }
+                    self.append_current_slot_state(&slot_id)?;
                     self.publish_event(
                         hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
                             agent_id,
@@ -493,16 +670,11 @@ impl DaemonEngine {
             AgentProcessEvent::SlotAgentSwapped(swapped) => {
                 if let Some(slot) = self.slot_mut(&swapped.slot_id) {
                     slot.current_agent_id = Some(swapped.new_agent_id.clone());
+                    slot.current_agent_pid = None;
                 }
+                self.append_current_slot_state(&swapped.slot_id)?;
                 self.publish_event(
                     hypervisor_event::Payload::SlotAgentSwapped(swapped.clone()),
-                    None,
-                );
-                self.publish_event(
-                    hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {
-                        agent_id: swapped.new_agent_id,
-                        new_state: AgentState::Executing as i32,
-                    }),
                     None,
                 );
             }
@@ -525,10 +697,19 @@ impl DaemonEngine {
         let slot_details = self
             .slot_descriptor(slot_id)
             .ok_or_else(|| SessionConfigError::Validation(format!("unknown slot `{slot_id}`")))?;
+        let timestamp_ms = now_ms();
+        self.wal.append(&WalEntry::TelemetryRecorded {
+            timestamp_ms,
+            slot_id: slot_id.to_string(),
+            project_id: slot_details.project_id.clone(),
+            tokens_in: telemetry.tokens_in.unwrap_or_default(),
+            tokens_out: telemetry.tokens_out.unwrap_or_default(),
+            cost_usd: telemetry.cost_usd.unwrap_or_default(),
+        })?;
         let record = TokenUsageRecord {
             slot_id: slot_id.to_string(),
             project_id: slot_details.project_id.clone(),
-            timestamp_ms: now_ms() as i64,
+            timestamp_ms: timestamp_ms as i64,
             tokens_in: telemetry.tokens_in.unwrap_or_default(),
             tokens_out: telemetry.tokens_out.unwrap_or_default(),
             model: slot_details.model.clone(),
@@ -562,7 +743,7 @@ impl DaemonEngine {
                 None,
             );
             if alert.hard_kill {
-                self.kill_project(&alert.project_id, TaskStatus::Archived).await;
+                self.kill_project(&alert.project_id, TaskStatus::Archived).await?;
             }
         }
 
@@ -583,18 +764,21 @@ impl DaemonEngine {
         self.state.total_session_cost = update.session_total.cost_usd;
     }
 
-    fn enqueue_merge(&mut self, slot_id: &str) {
+    fn enqueue_merge(&mut self, slot_id: &str) -> Result<(), DaemonError> {
         let Some(project_id) = self.state.slot_project.get(slot_id).cloned() else {
-            return;
+            return Ok(());
         };
         let already_queued = self
             .state
             .projects
             .get(&project_id)
-            .map(|project| project.merge_queue.iter().any(|queued| queued == slot_id))
+            .map(|project| {
+                project.merge_inflight_slot.as_deref() == Some(slot_id)
+                    || project.merge_queue.iter().any(|queued| queued == slot_id)
+            })
             .unwrap_or(false);
         if already_queued {
-            return;
+            return Ok(());
         }
 
         if let Some(project) = self.state.projects.get_mut(&project_id) {
@@ -603,7 +787,7 @@ impl DaemonEngine {
         let agent_id = self
             .slot_mut(slot_id)
             .and_then(|slot| slot.current_agent_id.clone());
-        self.set_task_status(slot_id, TaskStatus::MergeQueue, agent_id, None);
+        self.set_task_status(slot_id, TaskStatus::MergeQueue, agent_id, None)
     }
 
     async fn drain_merge_queues(&mut self) -> Result<(), DaemonError> {
@@ -613,22 +797,25 @@ impl DaemonEngine {
                 let Some(project) = self.state.projects.get_mut(&project_id) else {
                     continue;
                 };
-                if project.merge_inflight {
+                if project.merge_inflight_slot.is_some() {
                     None
                 } else {
                     let next = project.merge_queue.pop_front();
                     if next.is_some() {
-                        project.merge_inflight = true;
+                        project.merge_inflight_slot = next.clone();
                     }
                     next
                 }
             };
 
             if let Some(slot_id) = next_slot {
-                self.merge_slot(&project_id, &slot_id).await?;
-                if let Some(project) = self.state.projects.get_mut(&project_id) {
-                    project.merge_inflight = false;
+                let merge_result = self.merge_slot(&project_id, &slot_id).await;
+                if let Some(project) = self.state.projects.get_mut(&project_id)
+                    && project.merge_inflight_slot.as_deref() == Some(slot_id.as_str())
+                {
+                    project.merge_inflight_slot = None;
                 }
+                merge_result?;
             }
         }
 
@@ -656,13 +843,23 @@ impl DaemonEngine {
 
         match result {
             Ok(()) => {
-                let barrier_id = Some(next_barrier_id());
                 if let Some(slot) = self.slot_mut(slot_id) {
                     slot.worktree_path = None;
                     slot.supervisor = None;
                     slot.current_agent_id = None;
+                    slot.current_agent_pid = None;
                 }
-                self.set_task_status(slot_id, TaskStatus::Done, None, barrier_id.clone());
+                if let Some(project) = self.state.projects.get_mut(project_id) {
+                    project.merge_inflight_slot = None;
+                }
+                self.wal.append(&WalEntry::MergeCompleted {
+                    timestamp_ms: now_ms(),
+                    slot_id: slot_id.to_string(),
+                    project_id: project_id.to_string(),
+                    outcome: MergeOutcomeTag::Success,
+                })?;
+                let barrier_id = Some(next_barrier_id());
+                self.set_task_status(slot_id, TaskStatus::Done, None, barrier_id.clone())?;
                 self.publish_event(
                     hypervisor_event::Payload::WorktreeStatusChanged(WorktreeStatusChanged {
                         worktree_id: slot_id.to_string(),
@@ -672,14 +869,53 @@ impl DaemonEngine {
                 );
             }
             Err(GitWorktreeError::Conflict { .. }) => {
-                self.set_task_status(slot_id, TaskStatus::Resolving, None, None);
+                if let Some(slot) = self.slot_mut(slot_id) {
+                    slot.supervisor = None;
+                    slot.current_agent_pid = None;
+                }
+                if let Some(project) = self.state.projects.get_mut(project_id) {
+                    project.merge_inflight_slot = None;
+                }
+                self.wal.append(&WalEntry::MergeCompleted {
+                    timestamp_ms: now_ms(),
+                    slot_id: slot_id.to_string(),
+                    project_id: project_id.to_string(),
+                    outcome: MergeOutcomeTag::Conflict,
+                })?;
+                self.set_task_status(slot_id, TaskStatus::Resolving, None, None)?;
             }
             Err(GitWorktreeError::VerificationFailed { .. } | GitWorktreeError::VerificationTimedOut { .. }) => {
-                self.set_task_status(slot_id, TaskStatus::Review, None, None);
+                if let Some(slot) = self.slot_mut(slot_id) {
+                    slot.supervisor = None;
+                    slot.current_agent_pid = None;
+                }
+                if let Some(project) = self.state.projects.get_mut(project_id) {
+                    project.merge_inflight_slot = None;
+                }
+                self.wal.append(&WalEntry::MergeCompleted {
+                    timestamp_ms: now_ms(),
+                    slot_id: slot_id.to_string(),
+                    project_id: project_id.to_string(),
+                    outcome: MergeOutcomeTag::VerificationFailed,
+                })?;
+                self.set_task_status(slot_id, TaskStatus::Review, None, None)?;
             }
             Err(other) => {
                 eprintln!("merge failure for {project_id}/{slot_id}: {other}");
-                self.set_task_status(slot_id, TaskStatus::Review, None, None);
+                if let Some(slot) = self.slot_mut(slot_id) {
+                    slot.supervisor = None;
+                    slot.current_agent_pid = None;
+                }
+                if let Some(project) = self.state.projects.get_mut(project_id) {
+                    project.merge_inflight_slot = None;
+                }
+                self.wal.append(&WalEntry::MergeCompleted {
+                    timestamp_ms: now_ms(),
+                    slot_id: slot_id.to_string(),
+                    project_id: project_id.to_string(),
+                    outcome: MergeOutcomeTag::VerificationFailed,
+                })?;
+                self.set_task_status(slot_id, TaskStatus::Review, None, None)?;
             }
         }
 
@@ -692,7 +928,28 @@ impl DaemonEngine {
         status: TaskStatus,
         agent_id: Option<String>,
         barrier_id: Option<String>,
-    ) {
+    ) -> Result<(), DaemonError> {
+        let (current_agent_id, current_agent_pid, current_worktree_path) = self
+            .state
+            .slot_project
+            .get(slot_id)
+            .and_then(|project_id| self.state.projects.get(project_id))
+            .and_then(|project| project.slots.get(slot_id))
+            .map(|slot| {
+                (
+                    slot.current_agent_id.clone(),
+                    slot.current_agent_pid,
+                    slot.worktree_path.clone(),
+                )
+            })
+            .unwrap_or((None, None, None));
+        self.append_slot_state(
+            slot_id,
+            status,
+            agent_id.clone().or(current_agent_id),
+            current_agent_pid,
+            current_worktree_path,
+        )?;
         if let Some(slot) = self.slot_mut(slot_id) {
             slot.task_status = status;
         }
@@ -704,6 +961,7 @@ impl DaemonEngine {
             }),
             barrier_id,
         );
+        Ok(())
     }
 
     fn publish_event(&self, payload: hypervisor_event::Payload, barrier_id: Option<String>) {
@@ -728,6 +986,65 @@ impl DaemonEngine {
         }
     }
 
+    fn append_slot_state(
+        &mut self,
+        slot_id: &str,
+        task_status: TaskStatus,
+        agent_id: Option<String>,
+        agent_pid: Option<u32>,
+        worktree_path: Option<PathBuf>,
+    ) -> Result<(), DaemonError> {
+        let Some(project_id) = self.state.slot_project.get(slot_id).cloned() else {
+            return Ok(());
+        };
+
+        self.wal.append(&WalEntry::SlotStateChanged {
+            timestamp_ms: now_ms(),
+            slot_id: slot_id.to_string(),
+            project_id,
+            task_status: task_status as i32,
+            agent_id,
+            agent_pid,
+            worktree_path: worktree_path.map(|path| path.display().to_string()),
+        })?;
+        Ok(())
+    }
+
+    fn append_current_slot_state(&mut self, slot_id: &str) -> Result<(), DaemonError> {
+        let Some(project_id) = self.state.slot_project.get(slot_id).cloned() else {
+            return Ok(());
+        };
+        let Some(project) = self.state.projects.get(&project_id) else {
+            return Ok(());
+        };
+        let Some(slot) = project.slots.get(slot_id) else {
+            return Ok(());
+        };
+
+        self.wal.append(&WalEntry::SlotStateChanged {
+            timestamp_ms: now_ms(),
+            slot_id: slot_id.to_string(),
+            project_id,
+            task_status: slot.task_status as i32,
+            agent_id: slot.current_agent_id.clone(),
+            agent_pid: slot.current_agent_pid,
+            worktree_path: slot
+                .worktree_path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+        })?;
+        Ok(())
+    }
+
+    fn write_checkpoint(&mut self) -> Result<(), DaemonError> {
+        let checkpoint = WalEntry::Checkpoint {
+            timestamp_ms: now_ms(),
+            full_state: serialize_checkpoint(&self.state.to_persisted())?,
+        };
+        self.wal.compact_to_checkpoint(&checkpoint)?;
+        Ok(())
+    }
+
     fn slot_descriptor(&self, slot_id: &str) -> Option<SlotDescriptor> {
         let project_id = self.state.slot_project.get(slot_id)?;
         let project = self.state.projects.get(project_id)?;
@@ -735,12 +1052,18 @@ impl DaemonEngine {
         Some(SlotDescriptor {
             project_id: project_id.clone(),
             slot_id: slot_id.to_string(),
+            repo_path: project.repo_path.clone(),
             branch: slot.branch.clone(),
             task: slot.task.clone(),
             model: slot.model.clone(),
+            harness: slot.harness.clone(),
+            mode: slot.mode,
             timeout_minutes: slot.timeout_minutes.max(1),
+            provider_config: slot.provider_config.clone(),
+            context: slot.context.clone(),
             budget: project.budget.clone(),
             orchestrator: project.orchestrator.clone(),
+            verify: project.verify.clone(),
         })
     }
 
@@ -828,6 +1151,100 @@ impl RuntimeState {
         })
     }
 
+    fn from_recovered_session(
+        session: SessionConfig,
+        verification_timeout: Duration,
+        persisted: &PersistedRuntimeState,
+    ) -> Result<Self, DaemonError> {
+        let mut state = Self::from_session(session, verification_timeout)?;
+        state.total_session_cost = persisted.total_session_cost;
+
+        for (project_id, persisted_project) in &persisted.projects {
+            let Some(project) = state.projects.get_mut(project_id) else {
+                continue;
+            };
+            project.current_cost_usd = persisted_project.current_cost_usd;
+            project.merge_queue = persisted_project
+                .merge_queue
+                .iter()
+                .filter(|slot_id| project.slots.contains_key(*slot_id))
+                .cloned()
+                .collect();
+            project.merge_inflight_slot = persisted_project
+                .merge_inflight_slot
+                .as_ref()
+                .filter(|slot_id| project.slots.contains_key(*slot_id))
+                .cloned();
+
+            for (slot_id, persisted_slot) in &persisted_project.slots {
+                let Some(slot) = project.slots.get_mut(slot_id) else {
+                    continue;
+                };
+                if let Some(task) = persisted_slot.task.clone() {
+                    slot.task = task;
+                }
+                if let Some(mode) = persisted_slot.mode.and_then(|raw| AgentMode::try_from(raw).ok()) {
+                    slot.mode = mode;
+                }
+                if let Some(status) = persisted_slot
+                    .task_status
+                    .and_then(|raw| TaskStatus::try_from(raw).ok())
+                {
+                    slot.task_status = status;
+                }
+                slot.current_agent_id = persisted_slot.current_agent_id.clone();
+                slot.current_agent_pid = persisted_slot.current_agent_pid;
+                slot.worktree_path = persisted_slot.worktree_path.as_ref().map(PathBuf::from);
+                slot.total_tokens = persisted_slot.total_tokens;
+                slot.total_cost_usd = persisted_slot.total_cost_usd;
+            }
+        }
+
+        Ok(state)
+    }
+
+    fn to_persisted(&self) -> PersistedRuntimeState {
+        PersistedRuntimeState {
+            total_session_cost: self.total_session_cost,
+            projects: self
+                .projects
+                .iter()
+                .map(|(project_id, project)| {
+                    (
+                        project_id.clone(),
+                        PersistedProjectState {
+                            current_cost_usd: project.current_cost_usd,
+                            merge_queue: project.merge_queue.clone(),
+                            merge_inflight_slot: project.merge_inflight_slot.clone(),
+                            slots: project
+                                .slots
+                                .iter()
+                                .map(|(slot_id, slot)| {
+                                    (
+                                        slot_id.clone(),
+                                        PersistedSlotState {
+                                            task: Some(slot.task.clone()),
+                                            mode: Some(slot.mode as i32),
+                                            task_status: Some(slot.task_status as i32),
+                                            current_agent_id: slot.current_agent_id.clone(),
+                                            current_agent_pid: slot.current_agent_pid,
+                                            worktree_path: slot
+                                                .worktree_path
+                                                .as_ref()
+                                                .map(|path| path.display().to_string()),
+                                            total_tokens: slot.total_tokens,
+                                            total_cost_usd: slot.total_cost_usd,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
     fn slot_ids(&self) -> Vec<String> {
         self.slot_project.keys().cloned().collect()
     }
@@ -868,7 +1285,7 @@ struct ProjectRuntime {
     verify: Option<VerifyConfig>,
     current_cost_usd: f64,
     merge_queue: VecDeque<String>,
-    merge_inflight: bool,
+    merge_inflight_slot: Option<String>,
     orchestrator: GitWorktreeOrchestrator,
     slots: BTreeMap<String, SlotRuntime>,
 }
@@ -890,7 +1307,7 @@ impl ProjectRuntime {
             verify: config.verify,
             current_cost_usd: 0.0,
             merge_queue: VecDeque::new(),
-            merge_inflight: false,
+            merge_inflight_slot: None,
             orchestrator,
             slots,
         }
@@ -931,14 +1348,19 @@ struct SlotRuntime {
     id: String,
     task: String,
     model: String,
+    harness: Option<String>,
     mode: AgentMode,
     branch: String,
     timeout_minutes: u64,
+    provider_config: BTreeMap<String, String>,
+    context: ContextConfig,
     task_status: TaskStatus,
     current_agent_id: Option<String>,
+    current_agent_pid: Option<u32>,
     worktree_path: Option<PathBuf>,
     total_tokens: u64,
     total_cost_usd: f64,
+    pending_swap_from: Option<String>,
     supervisor: Option<SlotSupervisor>,
 }
 
@@ -948,14 +1370,19 @@ impl SlotRuntime {
             id: slot.id,
             task: slot.task,
             model: slot.model,
+            harness: slot.harness,
             mode: slot.mode,
             branch: slot.branch,
             timeout_minutes: slot.timeout_minutes.max(1),
+            provider_config: slot.provider_config,
+            context: slot.context,
             task_status: TaskStatus::Pending,
             current_agent_id: None,
+            current_agent_pid: None,
             worktree_path: None,
             total_tokens: 0,
             total_cost_usd: 0.0,
+            pending_swap_from: None,
             supervisor: None,
         }
     }
@@ -983,12 +1410,18 @@ impl SlotRuntime {
 struct SlotDescriptor {
     project_id: String,
     slot_id: String,
+    repo_path: PathBuf,
     branch: String,
     task: String,
     model: String,
+    harness: Option<String>,
+    mode: AgentMode,
     timeout_minutes: u64,
+    provider_config: BTreeMap<String, String>,
+    context: ContextConfig,
     budget: BudgetConfig,
     orchestrator: GitWorktreeOrchestrator,
+    verify: Option<VerifyConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -996,61 +1429,6 @@ struct MergeDescriptor {
     orchestrator: GitWorktreeOrchestrator,
     worktree_path: PathBuf,
     verify: Option<VerifyConfig>,
-}
-
-fn build_initial_snapshot(session: &SessionConfig) -> FullStateSnapshot {
-    FullStateSnapshot {
-        projects: session
-            .projects
-            .iter()
-            .map(|project| Project {
-                id: project.id.clone(),
-                display_name: project.display_name.clone(),
-                repo_path: project
-                    .repo
-                    .as_ref()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_default(),
-                color: project.color.clone().unwrap_or_default(),
-                tags: project.tags.clone(),
-                budget_max_usd: project.budget.max_usd.unwrap_or_default(),
-                budget_warn_usd: project.budget.warn_usd.unwrap_or_default(),
-                current_cost_usd: 0.0,
-                slots: project
-                    .slots
-                    .iter()
-                    .map(|slot| AgentSlot {
-                        id: slot.id.clone(),
-                        project_id: project.id.clone(),
-                        task: slot.task.clone(),
-                        mode: slot.mode as i32,
-                        branch: slot.branch.clone(),
-                        current_agent_id: String::new(),
-                        worktree_id: String::new(),
-                        total_tokens: 0,
-                        total_cost_usd: 0.0,
-                    })
-                    .collect(),
-            })
-            .collect(),
-        task_dag: session
-            .projects
-            .iter()
-            .flat_map(|project| {
-                project.slots.iter().map(|slot| TaskNode {
-                    id: slot.id.clone(),
-                    title: slot.task.clone(),
-                    description: slot.task.clone(),
-                    status: TaskStatus::Pending as i32,
-                    assigned_agent_id: String::new(),
-                    project_id: project.id.clone(),
-                    dependency_ids: Vec::new(),
-                })
-            })
-            .collect(),
-        total_session_cost: 0.0,
-        session_budget_max_usd: session.session.budget.max_usd.unwrap_or_default(),
-    }
 }
 
 fn resolve_accounting_path(session_path: &Path, requested_path: &Path) -> PathBuf {
@@ -1074,19 +1452,6 @@ fn default_worktree_root(repo_path: &Path) -> PathBuf {
         .unwrap_or_else(|| Path::new("."))
         .join(".nexode-worktrees")
         .join(repo_name)
-}
-
-fn build_mock_agent_command(slot_id: &str, task: &str) -> AgentCommand {
-    let slot_id = shell_quote(slot_id);
-    let task = shell_quote(task);
-    let script = format!(
-        "set -eu\nmkdir -p .nexode-mock\nprintf '%s\\n' {task} > .nexode-mock/{slot_id}.txt\ngit add .nexode-mock/{slot_id}.txt\ngit commit -m \"mock update {slot_id}\" >/dev/null\necho \"TOKENS in={MOCK_TOKENS_IN} out={MOCK_TOKENS_OUT} cost={MOCK_COST_USD}\"\necho \"completed {slot_id}\""
-    );
-    AgentCommand::shell(script)
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn now_ms() -> u64 {
@@ -1132,10 +1497,13 @@ projects:
       test: "find .nexode-mock -maxdepth 1 -type f | grep -q ."
     slots:
       - id: "slot-a"
+        harness: "mock"
         task: "Implement slot a"
       - id: "slot-b"
+        harness: "mock"
         task: "Implement slot b"
       - id: "slot-c"
+        harness: "mock"
         task: "Implement slot c"
 "#,
         );
@@ -1187,6 +1555,7 @@ projects:
       warn_usd: 0.1
     slots:
       - id: "slot-a"
+        harness: "mock"
         task: "Run over budget"
 "#,
         );
@@ -1208,6 +1577,64 @@ projects:
         server.await.expect("join daemon task").expect("daemon exits cleanly");
 
         assert_eq!(snapshot.task_dag[0].status, TaskStatus::Archived as i32);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn recovers_review_state_without_restarting_finished_slot() {
+        let fixture = DaemonFixture::new();
+        let session_path = fixture.write_session(
+            r#"
+version: "2.0"
+session:
+  name: "recovery"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let config = fixture.config(session_path.clone());
+        let server = tokio::spawn(async move {
+            run_daemon_with_listener(config, listener, std::future::pending::<()>()).await
+        });
+
+        let mut client = fixture.client(addr).await;
+        let initial = wait_for_status(&mut client, "slot-a", TaskStatus::Review).await;
+        let initial_agent_id = initial.task_dag[0].assigned_agent_id.clone();
+        let initial_cost = initial.total_session_cost;
+
+        server.abort();
+        let _ = server.await;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let config = fixture.config(session_path);
+        let server = tokio::spawn(async move {
+            run_daemon_with_listener(config, listener, async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+        });
+
+        let mut client = fixture.client(addr).await;
+        let recovered = wait_for_status(&mut client, "slot-a", TaskStatus::Review).await;
+        shutdown_tx.send(()).expect("signal shutdown");
+        server.await.expect("join daemon task").expect("daemon exits cleanly");
+
+        assert_eq!(recovered.task_dag[0].assigned_agent_id, initial_agent_id);
+        assert!((recovered.total_session_cost - initial_cost).abs() < f64::EPSILON);
     }
 
     async fn wait_for_all_tasks_done(

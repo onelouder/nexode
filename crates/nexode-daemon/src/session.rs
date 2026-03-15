@@ -6,6 +6,7 @@ use nexode_proto::AgentMode;
 use serde::Deserialize;
 use serde::de::Error as _;
 use serde_yaml::Value;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 const DEFAULT_VERSION: &str = "2.0";
@@ -65,6 +66,7 @@ pub struct SlotConfig {
     pub id: String,
     pub task: String,
     pub model: String,
+    pub harness: Option<String>,
     pub mode: AgentMode,
     pub branch: String,
     pub timeout_minutes: u64,
@@ -198,6 +200,16 @@ pub fn load_session_config(path: impl AsRef<Path>) -> Result<SessionConfig, Sess
     })
 }
 
+pub fn session_config_hash(path: impl AsRef<Path>) -> Result<[u8; 32], SessionConfigError> {
+    let path = path.as_ref();
+    let contents = fs::read(path).map_err(|source| SessionConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let digest = Sha256::digest(contents);
+    Ok(digest.into())
+}
+
 fn resolve_slots(
     project: &ProjectRaw,
     repo_local: &RepoLocalRaw,
@@ -250,6 +262,7 @@ fn resolve_slots(
                 .branch
                 .clone()
                 .unwrap_or_else(|| format!("agent/{slot_id}")),
+            harness: merged.harness.clone(),
             id: slot_id,
             task: merged.task,
             model: defaults.model,
@@ -281,6 +294,9 @@ fn merge_slot(
         model: overlay
             .and_then(|slot| slot.model.clone())
             .or_else(|| base.model.clone()),
+        harness: overlay
+            .and_then(|slot| slot.harness.clone())
+            .or_else(|| base.harness.clone()),
         mode: overlay.and_then(|slot| slot.mode).or(base.mode),
         branch: overlay
             .and_then(|slot| slot.branch.clone())
@@ -852,6 +868,7 @@ struct SlotRaw {
     id: String,
     task: String,
     model: Option<String>,
+    harness: Option<String>,
     mode: Option<YamlMode>,
     branch: Option<String>,
     timeout_minutes: Option<u64>,
@@ -1115,6 +1132,32 @@ projects:
 
         let error = load_session_config(&session_path).expect_err("include cycle should fail");
         assert!(matches!(error, SessionConfigError::IncludeCycle(_)));
+    }
+
+    #[test]
+    fn parses_optional_harness_override_and_hashes_root_file() {
+        let fixture = TestFixture::new();
+        let session_path = fixture.write(
+            fixture.root().join("session.yaml"),
+            r#"
+version: "2.0"
+session:
+  name: Harness
+projects:
+  - id: my-app
+    slots:
+      - id: fix-bug
+        model: codex
+        harness: mock
+        task: Fix bug
+"#,
+        );
+
+        let config = load_session_config(&session_path).expect("config should parse");
+        assert_eq!(config.projects[0].slots[0].harness.as_deref(), Some("mock"));
+
+        let hash = session_config_hash(&session_path).expect("hash session config");
+        assert_ne!(hash, [0; 32]);
     }
 
     fn quote_yaml_path(path: &Path) -> String {
