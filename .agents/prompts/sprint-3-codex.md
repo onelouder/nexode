@@ -19,6 +19,7 @@ Execute Sprint 3: Observer Loops + Safety. The daemon can now orchestrate real a
    - `docs/reviews/sprint-1-review.md` — Sprint 1 findings
    - `docs/reviews/sprint-2-review.md` — Sprint 2 findings
    - `docs/architecture/kanban-state-machine.md` — valid state transitions
+   - `docs/architecture/observer-design.md` — Observer subsystem design (Sprint 3 scope + Phase 4+ context)
 
 3. Read source files you'll work with:
    - `crates/nexode-daemon/src/engine.rs` — engine loop, event dispatch, command handling
