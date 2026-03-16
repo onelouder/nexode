@@ -460,7 +460,13 @@ impl DaemonEngine {
         agent_id: Option<String>,
         barrier_id: Option<String>,
     ) -> Result<(), DaemonError> {
-        let (current_agent_id, current_agent_pid, current_worktree_path) = self
+        let (
+            current_agent_id,
+            current_agent_pid,
+            current_worktree_path,
+            previous_status,
+            existing_pre_pause_status,
+        ) = self
             .state
             .slot_project
             .get(slot_id)
@@ -471,9 +477,16 @@ impl DaemonEngine {
                     slot.current_agent_id.clone(),
                     slot.current_agent_pid,
                     slot.worktree_path.clone(),
+                    slot.task_status,
+                    slot.pre_pause_status,
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None, None, TaskStatus::Unspecified, None));
+        let next_pre_pause_status = match status {
+            TaskStatus::Paused if previous_status != TaskStatus::Paused => Some(previous_status),
+            TaskStatus::Paused => existing_pre_pause_status,
+            _ => None,
+        };
         self.append_slot_state(
             slot_id,
             status,
@@ -483,6 +496,7 @@ impl DaemonEngine {
         )?;
         if let Some(slot) = self.slot_mut(slot_id) {
             slot.task_status = status;
+            slot.pre_pause_status = next_pre_pause_status;
         }
         self.loop_detector.observe_status(slot_id, status);
         if matches!(status, TaskStatus::Done | TaskStatus::Archived) {

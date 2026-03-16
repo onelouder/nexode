@@ -364,9 +364,23 @@ impl DaemonEngine {
             })
             .collect::<Vec<_>>();
 
-        let mut state_changed = false;
+        let mut blocking_checks = tokio::task::JoinSet::new();
         for (slot_id, agent_id, total_tokens, token_budget, orchestrator, worktree_path) in checks {
-            let has_worktree_changes = orchestrator.has_worktree_changes(&worktree_path)?;
+            blocking_checks.spawn_blocking(move || {
+                (
+                    slot_id,
+                    agent_id,
+                    total_tokens,
+                    token_budget,
+                    orchestrator.has_worktree_changes(&worktree_path),
+                )
+            });
+        }
+
+        let mut state_changed = false;
+        while let Some(check) = blocking_checks.join_next().await {
+            let (slot_id, agent_id, total_tokens, token_budget, has_worktree_changes) = check?;
+            let has_worktree_changes = has_worktree_changes?;
             if let Some(finding) = self.loop_detector.check(
                 &slot_id,
                 agent_id.as_deref(),

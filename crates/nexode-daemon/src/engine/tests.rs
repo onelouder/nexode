@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use nexode_proto::hypervisor_server::Hypervisor;
 use nexode_proto::observer_alert;
-use nexode_proto::{MoveTask, SlotDispatch};
+use nexode_proto::{MoveTask, ResumeSlot, SlotDispatch};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
@@ -17,6 +17,7 @@ use super::test_support::{
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
 async fn full_auto_slots_merge_through_fifo_queue() {
     let fixture = DaemonFixture::new();
     let session_path = fixture.write_session(
@@ -82,6 +83,7 @@ projects:
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
 async fn hard_budget_alert_archives_project_slots() {
     let fixture = DaemonFixture::new();
     let session_path = fixture.write_session(
@@ -132,6 +134,7 @@ projects:
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
 async fn recovers_review_state_without_restarting_finished_slot() {
     let fixture = DaemonFixture::new();
     let session_path = fixture.write_session(
@@ -197,6 +200,7 @@ projects:
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
 async fn dispatch_command_returns_validated_outcomes() {
     let fixture = DaemonFixture::new();
     let session_path = fixture.write_session(
@@ -489,6 +493,67 @@ projects:
         }
         other => panic!("expected uncertainty alert, got {other:?}"),
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn observer_pause_can_resume_back_to_working() {
+    let fixture = DaemonFixture::new();
+    let session_path = fixture.write_session(
+        r#"
+version: "2.0"
+session:
+  name: "observer-resume"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "[[mock-loop]]"
+"#,
+    );
+
+    let mut config = fixture.config(session_path.clone());
+    config.observer.loop_detection.max_identical_outputs = 3;
+    config.observer.loop_detection.on_loop = LoopAction::Pause;
+
+    let (mut engine, _service) = fixture.engine(session_path, config).await;
+
+    engine.start_slot("slot-a").await.expect("start slot");
+    drive_engine_until(&mut engine, |engine| {
+        engine.current_task_status("slot-a") == Some(TaskStatus::Paused)
+    })
+    .await;
+
+    if let Some(slot) = engine.slot_mut("slot-a") {
+        slot.task = "Implement slot a".to_string();
+    }
+
+    let response = engine
+        .handle_command(OperatorCommand {
+            command_id: "resume-slot".to_string(),
+            action: Some(operator_command::Action::ResumeSlot(ResumeSlot {
+                slot_id: "slot-a".to_string(),
+                instruction: String::new(),
+            })),
+        })
+        .await
+        .expect("resume paused slot");
+    assert!(response.success);
+    assert_eq!(
+        engine.current_task_status("slot-a"),
+        Some(TaskStatus::Working)
+    );
+
+    drive_engine_until(&mut engine, |engine| {
+        engine.current_task_status("slot-a") == Some(TaskStatus::Review)
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

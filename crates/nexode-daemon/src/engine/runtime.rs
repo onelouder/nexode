@@ -270,6 +270,8 @@ pub(super) struct SlotRuntime {
     pub(super) provider_config: BTreeMap<String, String>,
     pub(super) context: ContextConfig,
     pub(super) task_status: TaskStatus,
+    // DECISION: keep pause history in memory until WAL/checkpoint versioning exists.
+    pub(super) pre_pause_status: Option<TaskStatus>,
     pub(super) current_agent_id: Option<String>,
     pub(super) current_agent_pid: Option<u32>,
     pub(super) worktree_path: Option<PathBuf>,
@@ -292,6 +294,7 @@ impl SlotRuntime {
             provider_config: slot.provider_config,
             context: slot.context,
             task_status: TaskStatus::Pending,
+            pre_pause_status: None,
             current_agent_id: None,
             current_agent_pid: None,
             worktree_path: None,
@@ -370,6 +373,11 @@ fn default_worktree_root(repo_path: &Path) -> PathBuf {
 }
 
 impl DaemonEngine {
+    pub(super) fn slot(&self, slot_id: &str) -> Option<&SlotRuntime> {
+        let project_id = self.state.slot_project.get(slot_id)?;
+        self.state.projects.get(project_id)?.slots.get(slot_id)
+    }
+
     pub(super) fn slot_descriptor(&self, slot_id: &str) -> Option<SlotDescriptor> {
         let project_id = self.state.slot_project.get(slot_id)?;
         let project = self.state.projects.get(project_id)?;
@@ -412,6 +420,10 @@ impl DaemonEngine {
             .get_mut(slot_id)
     }
 
+    pub(super) fn pre_pause_status(&self, slot_id: &str) -> Option<TaskStatus> {
+        self.slot(slot_id).and_then(|slot| slot.pre_pause_status)
+    }
+
     pub(super) fn find_slot_by_agent(&self, agent_id: &str) -> Option<String> {
         self.state.projects.iter().find_map(|(_, project)| {
             project.slots.iter().find_map(|(slot_id, slot)| {
@@ -421,12 +433,6 @@ impl DaemonEngine {
     }
 
     pub(super) fn current_task_status(&self, slot_id: &str) -> Option<TaskStatus> {
-        let project_id = self.state.slot_project.get(slot_id)?;
-        self.state
-            .projects
-            .get(project_id)?
-            .slots
-            .get(slot_id)
-            .map(|slot| slot.task_status)
+        self.slot(slot_id).map(|slot| slot.task_status)
     }
 }

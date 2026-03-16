@@ -1,71 +1,67 @@
 ---
 agent: gpt
-status: claimed
-from: pc
-timestamp: 2026-03-15T17:24:53-07:00
+status: handoff
+from: gpt
+timestamp: 2026-03-15T17:55:26-07:00
 task: "Sprint 4 — Engine Hardening + Module Decomposition"
 branch: "agent/gpt/sprint-4-engine-hardening"
-next: gpt
+next: pc
 ---
 
-# Handoff: Sprint 4 Ready for Codex
+# Handoff: Sprint 4 Ready for PC Review
 
 ## What Just Happened
 
-Sprint 3 (Observer Loops + Safety) was reviewed, rebased onto latest `origin/main`, and merged via squash merge. Merge commit: `9371feb`.
+Sprint 4 is implemented on `agent/gpt/sprint-4-engine-hardening`.
 
-Post-merge state:
-- 62 tests passing (58 daemon + 4 ctl)
-- `cargo fmt`, `cargo check`, `cargo clippy` all clean
-- All 5 Sprint 3 exit criteria met
-- Issues I-020 through I-024 added to ISSUES.md (all Low, non-blocking)
-- I-017 and R-005 resolved
+Commits on this branch:
+- `3cd2355` — Part 1 pure refactor: split `engine.rs` into the `engine/` module tree
+- Current HEAD — Parts 2-4: task-transition hardening, async observer tick, and daemon `clap` CLI
 
-## Sprint 4 Scope
+Resolved in this sprint:
+- `I-016` — pre-pause state tracking now guards `Paused -> Working` / `Paused -> MergeQueue`, and `MergeQueue -> Paused` is rejected
+- `I-022` — observer tick now runs git-status checks in concurrent `spawn_blocking` tasks
+- `I-008` — daemon CLI now uses `clap` with `--help` / `--version`, while preserving the positional session path and existing daemon flags
 
-Sprint 4 is a hardening sprint before Phase 2 (TUI + VS Code extension). Four deliverables:
+Additional test work:
+- Added unit coverage for pause/resume transition semantics in `engine/commands.rs`
+- Added integration coverage for observer pause -> operator resume in `engine/tests.rs`
+- Added daemon CLI parsing/help/version tests in `crates/nexode-daemon/src/main.rs`
+- Serialized the server-backed daemon integration tests with `serial_test` to avoid false failures from parallel daemon/worktree interference under `cargo test`
 
-1. **Engine module decomposition** — split `engine.rs` (~2700 lines) into an `engine/` directory with focused sub-modules (config, runtime, commands, slots, merge, events, tests). Pure refactor, zero behavior changes.
+Verification is green:
+- `cargo fmt --all`
+- `cargo test -p nexode-daemon`
+- `cargo test -p nexode-ctl`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
 
-2. **Fix I-016** — `is_valid_task_transition` diverges from the Kanban state machine spec. Add `pre_pause_status` tracking so resume transitions are validated against the slot's pre-pause state.
+Current test totals:
+- daemon: 63 library tests + 3 binary tests
+- ctl: 4 tests
 
-3. **Fix I-022** — Observer tick runs blocking `git status` synchronously in the async engine loop. Wrap in `spawn_blocking` following the existing pattern from merge operations.
+## Review Focus
 
-4. **Fix I-008** — Daemon `main.rs` uses manual arg parsing. Replace with `clap` derive macros (matching `nexode-ctl` patterns). Adds `--help` and `--version`.
+1. `I-016` semantics in:
+   - `crates/nexode-daemon/src/engine/commands.rs`
+   - `crates/nexode-daemon/src/engine/slots.rs`
+   - `crates/nexode-daemon/src/engine/runtime.rs`
 
-## Sprint 4 Prompt
+2. `I-022` async observer tick in:
+   - `crates/nexode-daemon/src/engine/mod.rs`
 
-`.agents/prompts/sprint-4-codex.md`
+3. `I-008` daemon CLI in:
+   - `crates/nexode-daemon/src/main.rs`
 
-## Read First
+4. Test-stability changes in:
+   - `crates/nexode-daemon/src/engine/test_support.rs`
+   - `crates/nexode-daemon/src/engine/tests.rs`
+   - `crates/nexode-daemon/Cargo.toml`
 
-- `AGENTS.md`
-- `.agents/openai.md`
-- `HANDOFF.md` (this file)
-- `PLAN_NOW.md`
-- `ISSUES.md` — focus on I-016, I-022, I-008
-- `DECISIONS.md`
-- `docs/architecture/kanban-state-machine.md` — needed for I-016 fix
-- `.agents/prompts/sprint-4-codex.md` — full sprint instructions
+## One Important Nuance
 
-## Context for Codex
+`pre_pause_status` is intentionally runtime-only for now.
 
-### engine.rs Structure
+I tested adding it to the current bincode-backed WAL/checkpoint structs, and old serialized bytes do not deserialize safely with a silent field addition. Rather than land a backward-unsafe persistence change in Sprint 4, I kept pause history in memory only and marked that choice with a `// DECISION:` comment in `engine/runtime.rs`.
 
-The file contains everything: `DaemonConfig`, `DaemonEngine`, `RuntimeState`, `ProjectRuntime`, `SlotRuntime`, `SlotDescriptor`, `MergeDescriptor`, all command handlers, event handlers, tick loop, observer integration, merge queue, slot lifecycle, helpers, and integration tests. See the sprint prompt for a suggested module decomposition.
-
-### I-016 Details
-
-Two divergences from `docs/architecture/kanban-state-machine.md`:
-1. `MergeQueue → Paused` is allowed in code but not in the spec
-2. `Paused → Working` and `Paused → MergeQueue` are allowed unconditionally, but the spec requires knowing the pre-pause state
-
-The fix needs a `pre_pause_status` field on the slot runtime. The observer's `LoopAction::Pause` only pauses WORKING slots, so it should work correctly with pre-pause tracking.
-
-### I-022 Details
-
-`run_observer_tick` in `engine.rs` calls `has_worktree_changes()` (which shells out to `git status --porcelain`) synchronously for every working slot per tick. Apply the `spawn_blocking` pattern already used in merge operations.
-
-### Commit Strategy
-
-Commit Part 1 (decomposition) separately before Parts 2-4. This lets the pure refactor be reviewed independently from behavioral changes.
+If pause/resume-after-restart semantics become required, that should be handled with explicit WAL/checkpoint versioning rather than a field append.

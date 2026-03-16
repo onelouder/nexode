@@ -31,7 +31,11 @@ impl DaemonEngine {
                         Some(format!("unknown task status `{}`", move_task.target)),
                     ));
                 };
-                if !is_valid_task_transition(current_status, target) {
+                if !is_valid_task_transition(
+                    current_status,
+                    target,
+                    self.pre_pause_status(&move_task.task_id),
+                ) {
                     return Ok(self.command_response(
                         &command_id,
                         CommandOutcome::InvalidTransition,
@@ -102,7 +106,16 @@ impl DaemonEngine {
                         Some(format!("slot `{slot_id}` is not paused")),
                     ));
                 }
-                self.start_slot(&slot_id).await?;
+                let Some(target) = self.resume_target(&slot_id) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::InvalidTransition,
+                        Some(format!(
+                            "slot `{slot_id}` cannot resume without a working or merge_queue pre-pause state"
+                        )),
+                    ));
+                };
+                self.move_task(&slot_id, target).await?;
                 self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::ResumeSlot(ResumeSlot {
@@ -116,6 +129,15 @@ impl DaemonEngine {
                         Some(format!("slot `{slot_id}` is not paused")),
                     ));
                 }
+                let Some(target) = self.resume_target(&slot_id) else {
+                    return Ok(self.command_response(
+                        &command_id,
+                        CommandOutcome::InvalidTransition,
+                        Some(format!(
+                            "slot `{slot_id}` cannot resume without a working or merge_queue pre-pause state"
+                        )),
+                    ));
+                };
                 if let Some(slot) = self.slot_mut(&slot_id)
                     && !instruction.trim().is_empty()
                 {
@@ -125,7 +147,7 @@ impl DaemonEngine {
                         instruction.trim(),
                     );
                 }
-                self.start_slot(&slot_id).await?;
+                self.move_task(&slot_id, target).await?;
                 self.command_response(&command_id, CommandOutcome::Executed, None)
             }
             operator_command::Action::KillAgent(kill) => {
@@ -210,6 +232,14 @@ impl DaemonEngine {
         self.start_slot(slot_id).await
     }
 
+    fn resume_target(&self, slot_id: &str) -> Option<TaskStatus> {
+        match self.pre_pause_status(slot_id) {
+            Some(TaskStatus::Working) => Some(TaskStatus::Working),
+            Some(TaskStatus::MergeQueue) => Some(TaskStatus::MergeQueue),
+            _ => None,
+        }
+    }
+
     pub(super) fn set_agent_mode(&mut self, agent_id: &str, raw_mode: i32) {
         let Some(slot_id) = self.find_slot_by_agent(agent_id) else {
             return;
@@ -223,7 +253,11 @@ impl DaemonEngine {
     }
 }
 
-fn is_valid_task_transition(current: TaskStatus, target: TaskStatus) -> bool {
+fn is_valid_task_transition(
+    current: TaskStatus,
+    target: TaskStatus,
+    pre_pause_status: Option<TaskStatus>,
+) -> bool {
     use TaskStatus::*;
 
     matches!(
@@ -231,8 +265,51 @@ fn is_valid_task_transition(current: TaskStatus, target: TaskStatus) -> bool {
         (Pending, Working | Archived)
             | (Working, Review | Paused | Archived)
             | (Review, MergeQueue | Working | Paused)
-            | (MergeQueue, Done | Resolving | Paused)
+            | (MergeQueue, Done | Resolving)
             | (Resolving, Done | Archived)
-            | (Paused, Working | MergeQueue)
+    ) || matches!(
+        (current, target, pre_pause_status),
+        (Paused, Working, Some(Working)) | (Paused, MergeQueue, Some(MergeQueue))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_from_working_resumes_to_working() {
+        assert!(is_valid_task_transition(
+            TaskStatus::Paused,
+            TaskStatus::Working,
+            Some(TaskStatus::Working),
+        ));
+    }
+
+    #[test]
+    fn pause_from_merge_queue_resumes_to_merge_queue() {
+        assert!(is_valid_task_transition(
+            TaskStatus::Paused,
+            TaskStatus::MergeQueue,
+            Some(TaskStatus::MergeQueue),
+        ));
+    }
+
+    #[test]
+    fn pause_from_working_cannot_resume_to_merge_queue() {
+        assert!(!is_valid_task_transition(
+            TaskStatus::Paused,
+            TaskStatus::MergeQueue,
+            Some(TaskStatus::Working),
+        ));
+    }
+
+    #[test]
+    fn merge_queue_cannot_transition_directly_to_paused() {
+        assert!(!is_valid_task_transition(
+            TaskStatus::MergeQueue,
+            TaskStatus::Paused,
+            None,
+        ));
+    }
 }

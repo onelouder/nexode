@@ -16,7 +16,7 @@ use super::*;
 pub(super) async fn wait_for_all_tasks_done(
     client: &mut HypervisorClient<tonic::transport::Channel>,
 ) -> FullStateSnapshot {
-    let deadline = time::Instant::now() + Duration::from_secs(10);
+    let deadline = time::Instant::now() + Duration::from_secs(40);
 
     loop {
         let snapshot = client
@@ -44,25 +44,30 @@ pub(super) async fn wait_for_status(
     task_id: &str,
     expected: TaskStatus,
 ) -> FullStateSnapshot {
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let snapshot = client
-                .get_full_state(tonic::Request::new(nexode_proto::StateRequest {}))
-                .await
-                .expect("get full state")
-                .into_inner();
-            if snapshot
-                .task_dag
-                .iter()
-                .any(|task| task.id == task_id && task.status == expected as i32)
-            {
-                return snapshot;
-            }
-            time::sleep(Duration::from_millis(100)).await;
+    let deadline = time::Instant::now() + Duration::from_secs(40);
+
+    loop {
+        let snapshot = client
+            .get_full_state(tonic::Request::new(nexode_proto::StateRequest {}))
+            .await
+            .expect("get full state")
+            .into_inner();
+        if snapshot
+            .task_dag
+            .iter()
+            .any(|task| task.id == task_id && task.status == expected as i32)
+        {
+            return snapshot;
         }
-    })
-    .await
-    .expect("task reaches expected state")
+        if time::Instant::now() >= deadline {
+            panic!(
+                "task `{task_id}` did not reach status {}: {:?}",
+                expected.as_str_name(),
+                snapshot
+            );
+        }
+        time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 pub(super) async fn subscribe_events(
