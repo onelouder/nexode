@@ -5,49 +5,48 @@
 
 ## Current Sprint
 
-- **Goal:** Sprint 4 — Engine Hardening + Module Decomposition
-- **Deadline:** 2026-03-29
+- **Goal:** Sprint 5 — TUI Dashboard
+- **Deadline:** 2026-04-05
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-4-engine-hardening`
-- **Previous sprint:** Sprint 3 — Observer Loops + Safety (complete, merged to `main` at `9371feb`)
+- **Current Branch:** `agent/gpt/sprint-5-tui-dashboard` (to be created)
+- **Previous sprint:** Sprint 4 — Engine Hardening + Module Decomposition (complete, merged to `main` at `ee82552`)
 
 ## Tasks
 
-### Part 1: Engine Module Decomposition
+### Part 1: Crate Setup and gRPC Client
 
-- [x] Read and map `engine.rs` structure (~2700 lines, 74 functions)
-- [x] Create `crates/nexode-daemon/src/engine/` directory module
-- [x] Extract `DaemonConfig` and config structs → `engine/config.rs`
-- [x] Extract `RuntimeState`, `ProjectRuntime`, `SlotRuntime`, `SlotDescriptor`, `MergeDescriptor` → `engine/runtime.rs`
-- [x] Extract command handlers → `engine/commands.rs`
-- [x] Extract slot lifecycle management → `engine/slots.rs`
-- [x] Extract merge queue logic → `engine/merge.rs`
-- [x] Extract event emission helpers → `engine/events.rs`
-- [x] Move integration tests → `engine/tests.rs`
-- [x] Verify `cargo fmt --all`, `cargo test -p nexode-daemon`, `cargo check --workspace`, and `cargo doc --workspace`
-- [x] Commit decomposition separately (`3cd2355`)
+- [ ] Create `crates/nexode-tui/` workspace member
+- [ ] Add dependencies: `ratatui`, `crossterm`, `nexode-proto`, `tonic`, `tokio`, `clap`
+- [ ] CLI args: `--addr <host:port>` (default `http://[::1]:50051`)
+- [ ] Connect to daemon, fetch `FullStateSnapshot`, subscribe to events
+- [ ] Create `src/state.rs` with `AppState`, `apply_event()`, `apply_snapshot()`
 
-### Part 2: Fix I-016 — Task Transition Semantics
+### Part 2: Dashboard Layout
 
-- [x] Add `pre_pause_status: Option<TaskStatus>` to slot runtime
-- [x] Record pre-pause state on Paused transitions
-- [x] Validate resume transitions against pre-pause state
-- [x] Remove `MergeQueue → Paused` from allowed transitions
-- [x] Add unit tests for pre-pause tracking
-- [x] Add integration test for observer pause → resume flow
+- [ ] Create `src/ui.rs` with three-panel layout (header, main split, event log)
+- [ ] Render project/slot tree (left panel) with status-colored indicators
+- [ ] Render slot detail view (right panel)
+- [ ] Render scrolling event log (bottom panel)
+- [ ] Create `src/events.rs` with event-to-string formatting for all event types
 
-### Part 3: Fix I-022 — Async Observer Tick
+### Part 3: Keyboard Input and Command Dispatch
 
-- [x] Wrap `has_worktree_changes` in `spawn_blocking`
-- [x] Concurrent await for all working slots
-- [x] Verify existing observer tests pass
+- [ ] Create `src/input.rs` with key bindings (quit, navigate, pause, resume, kill)
+- [ ] Command mode (`:`) for structured and free-form commands
+- [ ] Dispatch commands via gRPC `DispatchCommand`
+- [ ] Show `CommandResponse` result in status bar
 
-### Part 4: Fix I-008 — Daemon CLI with clap
+### Part 4: Async Architecture
 
-- [x] Add `clap` to `nexode-daemon` dependencies
-- [x] Define `#[derive(Parser)]` struct for daemon CLI
-- [x] Add `--help` and `--version` support
-- [x] Verify daemon starts correctly with existing flags
+- [ ] Three-task `tokio::select!` loop (gRPC receiver, input handler, render tick)
+- [ ] Input reader in `spawn_blocking` with channel forwarding
+- [ ] ~15 FPS render tick
+
+### Part 5: Graceful Terminal Handling
+
+- [ ] Raw mode + alternate screen on startup
+- [ ] Cleanup on quit, Ctrl+C, and panic
+- [ ] `Drop` guard or panic hook for terminal restoration
 
 ## Blocked
 
@@ -55,39 +54,25 @@
 
 ## Done This Sprint
 
-- Sprint 4 branch created from `origin/main`
-- `engine.rs` decomposed into `engine/` submodules with runtime, command, slot, merge, event, and test files
-- Part 1 committed separately at `3cd2355` (`[gpt] refactor: decompose daemon engine module`)
-- I-016 resolved with pre-pause tracking, guarded resume semantics, and new unit/integration coverage
-- I-022 resolved by moving observer git-status checks to concurrent `spawn_blocking` tasks
-- I-008 resolved by replacing daemon manual arg parsing with `clap`, while preserving the positional session path and existing flags
-- Server-backed daemon integration tests are serialized with `serial_test` to avoid false failures from parallel daemon/worktree interference
-- Sprint 4 verification passed:
-  - `cargo fmt --all`
-  - `cargo test -p nexode-daemon`
-  - `cargo test -p nexode-ctl`
-  - `cargo check --workspace`
-  - `cargo clippy --workspace -- -D warnings`
+- (Sprint 5 not yet started)
 
-## Done Previously (Sprint 3)
+## Done Previously (Sprint 4)
 
-- Added the observer layer in `crates/nexode-daemon/src/observer.rs` (554 lines)
-- Loop detection, uncertainty routing, sandbox enforcement integrated into `engine.rs`
-- Extended proto surface with `ObserverAlert`, `ResumeSlot`, `event_sequence`, `AgentStateChanged.slot_id`
-- Updated gRPC transport and `nexode-ctl watch` for event-gap detection
-- Resolved I-017 and R-005
-- Sprint 3 merged to main at `9371feb` (squash merge, 18 files, +1798/-232)
+- Decomposed `engine.rs` (~2700 lines) into `engine/` directory with 8 sub-modules
+- I-016 resolved: `pre_pause_status` tracking for Kanban-compliant transitions
+- I-022 resolved: Observer tick uses `JoinSet::spawn_blocking`
+- I-008 resolved: Daemon CLI migrated to `clap`
+- 70 tests total (63 daemon lib + 3 daemon bin + 4 ctl), all passing
 
 ## Next Up
 
-- PC review of Sprint 4 on `agent/gpt/sprint-4-engine-hardening`
-- After Sprint 4 merge: Phase 2 (M3) — TUI + VS Code Extension
+- After Sprint 5: VS Code extension (M3 continuation), or Phase 2 polish sprint
 
 ## Notes
 
-- Sprint 4 prompt: `.agents/prompts/sprint-4-codex.md`
-- Part 1 is a pure refactor — commit separately for clean review
-- I-016 fix requires reading `docs/architecture/kanban-state-machine.md` carefully
-- I-022 fix follows the existing `spawn_blocking` pattern from merge operations in `git.rs`
-- `pre_pause_status` is intentionally runtime-only; a naive WAL/checkpoint field addition is not backward-safe with the current bincode format
+- Sprint 5 prompt: `.agents/prompts/sprint-5-codex.md`
+- The TUI is a **new crate** — do NOT modify daemon, proto, or ctl crates
+- Proto surface: `GetFullState`, `SubscribeEvents`, `DispatchCommand`
+- Use `ratatui` built-in widgets, keep it functional over pretty
+- Minimum terminal: 80x24
 - Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`

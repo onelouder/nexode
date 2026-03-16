@@ -69,25 +69,38 @@
   - [x] Event sequence numbers (R-005 fix — monotonic counter, gap detection, state catch-up)
   - [x] Uncertainty routing (agent "I'm stuck" detection, auto-pause, operator resume)
 
-### M2d: Sprint 4 — Engine Hardening + Module Decomposition 🔄
+### M2d: Sprint 4 — Engine Hardening + Module Decomposition ✅
 - **Target:** 2026-03-29
-- **Status:** Ready for Codex
+- **Status:** Complete (merged 2026-03-15, commit `ee82552`)
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-4-codex.md`
+- **Review:** `docs/reviews/sprint-4-review.md`
 - **Deliverables:**
-  - [ ] Engine module decomposition (`engine.rs` → `engine/` directory with focused sub-modules)
-  - [ ] Fix I-016: Task transition semantics (pre-pause state tracking)
-  - [ ] Fix I-022: Async observer tick (`spawn_blocking` for git-status calls)
-  - [ ] Fix I-008: Daemon CLI with clap (replace manual arg parsing)
+  - [x] Engine module decomposition (`engine.rs` → `engine/` directory with 8 sub-modules)
+  - [x] Fix I-016: Task transition semantics (pre-pause state tracking)
+  - [x] Fix I-022: Async observer tick (`JoinSet::spawn_blocking`)
+  - [x] Fix I-008: Daemon CLI with clap
 
-### M3: Phase 2 — TUI + VS Code Extension ⏳
+### M3a: Sprint 5 — TUI Dashboard 🔄
+- **Target:** 2026-04-05
+- **Status:** Ready for Codex
+- **Agent:** gpt (Codex)
+- **Prompt:** `.agents/prompts/sprint-5-codex.md`
+- **Deliverables:**
+  - [ ] New `nexode-tui` crate with `ratatui` + `crossterm`
+  - [ ] Three-panel dashboard: project tree, slot detail, event log
+  - [ ] Live gRPC event streaming and state updates
+  - [ ] Interactive controls: navigate, pause/resume/kill, command mode
+  - [ ] Graceful terminal handling (raw mode, panic cleanup)
+
+### M3b: Phase 2 Continuation — VS Code Extension ⏳
 - **Target:** TBD
 - **Status:** Not Started
 - **Deliverables:**
-  - [ ] Terminal UI for session monitoring
-  - [ ] VS Code extension with embedded panel
-  - [ ] Real-time slot status visualization
-  - [ ] Interactive command dispatch from TUI/extension
+  - [ ] VS Code extension with embedded webview panel
+  - [ ] Real-time slot status visualization via gRPC/WebSocket
+  - [ ] Interactive command dispatch from extension
+  - [ ] R-008 mitigation: bypass Extension Host for agent data streams
 
 ### M4: Phase 3 — Multi-Project Orchestration ⏳
 - **Target:** TBD

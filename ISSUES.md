@@ -133,13 +133,13 @@
 - **Details:** `drain_merge_queues()` runs on the tick interval (default 2s), not immediately when a task enters MERGE_QUEUE via `enqueue_merge()`. For Phase 0 this is fine. For production, consider draining immediately on enqueue.
 - **When:** When merge latency matters (Phase 2+).
 
-### I-008: Daemon `main.rs` uses manual arg parsing instead of `clap`
+### ~~I-008: Daemon `main.rs` uses manual arg parsing instead of `clap`~~ RESOLVED
 
 - **Source:** Phase 0 review v2 (2026-03-14)
 - **Module:** `crates/nexode-daemon/src/main.rs`
 - **Severity:** Low
-- **Details:** The daemon binary does manual `std::env::args()` parsing with `--flag value` matching, while `nexode-ctl` uses `clap` with derive macros. Minor inconsistency — no `--help` support on the daemon.
-- **When:** Whenever someone touches daemon CLI args.
+- **Resolved:** Sprint 4 (2026-03-15), branch `agent/gpt/sprint-4-engine-hardening`
+- **Resolution:** Daemon now uses `clap` derive macros matching `nexode-ctl` conventions. Supports `--session`, `--port`, positional session path, `--help`, and `--version`. Three CLI tests added.
 
 ### ~~I-009: `completion_detected` overrides non-zero exit as success~~ FIXED
 
@@ -197,16 +197,13 @@
 - **Fixed:** Sprint 2 (2026-03-15), branch `agent/gpt/sprint-2-real-agents`
 - **Resolution:** Now uses `serde_json::from_str` + `json_field_is()` for proper JSON parsing. Test verifies `"task completed successfully"` no longer triggers false positives, while valid JSON result objects are correctly detected.
 
-### I-016: `is_valid_task_transition` diverges from Kanban State Machine spec
+### ~~I-016: `is_valid_task_transition` diverges from Kanban State Machine spec~~ RESOLVED
 
 - **Source:** Sprint 2 review (2026-03-15), finding F-001
-- **Module:** `engine.rs`, `is_valid_task_transition()`
+- **Module:** `engine/commands.rs`, `is_valid_task_transition()`
 - **Severity:** Medium
-- **Details:** Two divergences from `docs/architecture/kanban-state-machine.md`:
-  1. `MergeQueue → Paused` is allowed but not in the spec's exhaustive transition table.
-  2. `Paused → Working` and `Paused → MergeQueue` are allowed unconditionally, but the spec requires tracking the pre-pause state ("if was WORKING" / "if was queued"). No pre-pause state is stored.
-- **Impact:** Could allow semantically wrong transitions (e.g., pause a REVIEW slot and resume to WORKING, bypassing re-review). Non-blocking for now since the daemon only pauses WORKING slots.
-- **When:** Before adding operator pause commands or UI pause controls.
+- **Resolved:** Sprint 4 (2026-03-15), branch `agent/gpt/sprint-4-engine-hardening`
+- **Resolution:** `is_valid_task_transition` now takes a third argument `pre_pause_status: Option<TaskStatus>`. `MergeQueue → Paused` removed. `Paused → Working` only valid if `pre_pause_status == Some(Working)`. `Paused → MergeQueue` only valid if `pre_pause_status == Some(MergeQueue)`. Four unit tests cover the truth table. Note: `pre_pause_status` is runtime-only (not WAL-persisted) due to bincode backward-safety constraints.
 
 ### ~~I-017: `AgentStateChanged` proto missing `slot_id` field~~ RESOLVED
 
@@ -248,13 +245,13 @@
 - **Details:** Each `SlotLoopState` has `emitted_*_alert` flags. Once fired, the alert won't fire again unless the slot is reset (which only happens on pause/kill/resume). If `LoopAction::Alert` is configured (no intervention), the operator gets one alert and no follow-ups. An operator who sees an alert and doesn't act gets no second warning.
 - **When:** When `LoopAction::Alert` is the configured intervention. Consider a configurable alert cooldown.
 
-### I-022: `run_observer_tick` runs blocking git-status in async context
+### ~~I-022: `run_observer_tick` runs blocking git-status in async context~~ RESOLVED
 
 - **Source:** Sprint 3 review (2026-03-15), finding F-003
-- **Module:** `engine.rs:1042-1097`
+- **Module:** `engine/mod.rs`
 - **Severity:** Low
-- **Details:** The observer tick calls `orchestrator.has_worktree_changes()` (which runs `git status --porcelain` via `std::process::Command`) synchronously for every working slot on each tick. At scale (10-15 agents), this blocks the tokio runtime for multiple subprocess invocations every 2 seconds.
-- **When:** Phase 2+ when slot counts grow. Apply the existing `spawn_blocking` pattern used in merge operations.
+- **Resolved:** Sprint 4 (2026-03-15), branch `agent/gpt/sprint-4-engine-hardening`
+- **Resolution:** Observer tick now uses `JoinSet::spawn_blocking` to run `has_worktree_changes()` concurrently for all working slots. Results are collected and fed to the observer after all checks complete.
 
 ### I-023: `candidate_paths` may false-positive on URLs and source locations
 
@@ -271,6 +268,14 @@
 - **Severity:** Low
 - **Details:** `ObserverFindingKind::LoopDetected`, `Stuck`, and `BudgetVelocity` all map to the same proto variant `observer_alert::Detail::LoopDetected`. A UI client can't switch on the finding kind without parsing the `reason` string.
 - **When:** Phase 2/3 when building TUI or VS Code extension. Consider adding a `finding_kind` enum to the proto message or splitting into three variants.
+
+### I-025: `Review → Paused` creates un-resumable state via `ResumeAgent`/`ResumeSlot`
+
+- **Source:** Sprint 4 review (2026-03-15), finding F-01
+- **Module:** `engine/commands.rs:235-241`
+- **Severity:** Low
+- **Details:** The transition table allows `Review → Paused`, and `pre_pause_status` correctly records `Some(Review)`. However, `resume_target()` only handles `Some(Working)` and `Some(MergeQueue)`, returning `None` for `Some(Review)`. This means a slot paused from Review cannot be resumed via `ResumeAgent` or `ResumeSlot` — the operator must use `MoveTask` instead. This matches the Kanban spec (which only defines Working and MergeQueue resume paths) but creates a UX asymmetry.
+- **When:** Low priority. Consider adding `Some(Review) → Some(Review)` to `resume_target()` when operator pause commands gain wider use.
 
 ---
 

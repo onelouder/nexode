@@ -1,67 +1,80 @@
 ---
-agent: gpt
+agent: pc
 status: handoff
-from: gpt
-timestamp: 2026-03-15T17:55:26-07:00
-task: "Sprint 4 — Engine Hardening + Module Decomposition"
-branch: "agent/gpt/sprint-4-engine-hardening"
-next: pc
+from: pc
+timestamp: 2026-03-15T19:30:00-07:00
+task: "Sprint 5 — TUI Dashboard"
+branch: "main"
+next: gpt
 ---
 
-# Handoff: Sprint 4 Ready for PC Review
+# Handoff: Sprint 5 Ready for Codex
 
 ## What Just Happened
 
-Sprint 4 is implemented on `agent/gpt/sprint-4-engine-hardening`.
+Sprint 4 (Engine Hardening + Module Decomposition) was reviewed and merged to `main` at `ee82552`. All exit criteria met, all 70 tests pass, two low-severity findings noted (I-025 added).
 
-Commits on this branch:
-- `3cd2355` — Part 1 pure refactor: split `engine.rs` into the `engine/` module tree
-- Current HEAD — Parts 2-4: task-transition hardening, async observer tick, and daemon `clap` CLI
+Sprint 4 resolved:
+- **I-016:** Task transitions now context-aware with `pre_pause_status` tracking
+- **I-022:** Observer tick uses `JoinSet::spawn_blocking` for git-status
+- **I-008:** Daemon CLI migrated to `clap`
 
-Resolved in this sprint:
-- `I-016` — pre-pause state tracking now guards `Paused -> Working` / `Paused -> MergeQueue`, and `MergeQueue -> Paused` is rejected
-- `I-022` — observer tick now runs git-status checks in concurrent `spawn_blocking` tasks
-- `I-008` — daemon CLI now uses `clap` with `--help` / `--version`, while preserving the positional session path and existing daemon flags
+New finding: **I-025** (Low) — `Review → Paused` is un-resumable via `ResumeAgent`/`ResumeSlot`; `MoveTask` is the workaround.
 
-Additional test work:
-- Added unit coverage for pause/resume transition semantics in `engine/commands.rs`
-- Added integration coverage for observer pause -> operator resume in `engine/tests.rs`
-- Added daemon CLI parsing/help/version tests in `crates/nexode-daemon/src/main.rs`
-- Serialized the server-backed daemon integration tests with `serial_test` to avoid false failures from parallel daemon/worktree interference under `cargo test`
+Sprint 4 review: `docs/reviews/sprint-4-review.md`
 
-Verification is green:
-- `cargo fmt --all`
-- `cargo test -p nexode-daemon`
-- `cargo test -p nexode-ctl`
-- `cargo check --workspace`
-- `cargo clippy --workspace -- -D warnings`
+## Sprint 5 Scope
 
-Current test totals:
-- daemon: 63 library tests + 3 binary tests
-- ctl: 4 tests
+Sprint 5 begins Phase 2 (M3) — the first real user-facing interface. Build a terminal dashboard (`nexode-tui`) that connects to the daemon via gRPC and provides:
 
-## Review Focus
+1. **Live session overview** — project tree with slot status, budget tracking
+2. **Slot detail view** — selected slot's task, agent, status, tokens, cost
+3. **Event log** — scrolling feed of all daemon events (state changes, telemetry, observer alerts)
+4. **Interactive controls** — navigate tree, pause/resume/kill slots, command input mode
 
-1. `I-016` semantics in:
-   - `crates/nexode-daemon/src/engine/commands.rs`
-   - `crates/nexode-daemon/src/engine/slots.rs`
-   - `crates/nexode-daemon/src/engine/runtime.rs`
+New crate: `crates/nexode-tui/` using `ratatui` + `crossterm`.
 
-2. `I-022` async observer tick in:
-   - `crates/nexode-daemon/src/engine/mod.rs`
+## Sprint 5 Prompt
 
-3. `I-008` daemon CLI in:
-   - `crates/nexode-daemon/src/main.rs`
+`.agents/prompts/sprint-5-codex.md`
 
-4. Test-stability changes in:
-   - `crates/nexode-daemon/src/engine/test_support.rs`
-   - `crates/nexode-daemon/src/engine/tests.rs`
-   - `crates/nexode-daemon/Cargo.toml`
+## Read First
 
-## One Important Nuance
+- `AGENTS.md`
+- `.agents/openai.md`
+- `HANDOFF.md` (this file)
+- `PLAN_NOW.md`
+- `.agents/prompts/sprint-5-codex.md` — full sprint instructions
+- `crates/nexode-proto/proto/hypervisor.proto` — the TUI renders these entities
+- `crates/nexode-ctl/src/main.rs` — existing gRPC client patterns
+- `docs/architecture/kanban-state-machine.md` — Kanban columns define TUI status colors
 
-`pre_pause_status` is intentionally runtime-only for now.
+## Context for Codex
 
-I tested adding it to the current bincode-backed WAL/checkpoint structs, and old serialized bytes do not deserialize safely with a silent field addition. Rather than land a backward-unsafe persistence change in Sprint 4, I kept pause history in memory only and marked that choice with a `// DECISION:` comment in `engine/runtime.rs`.
+### Proto Surface
 
-If pause/resume-after-restart semantics become required, that should be handled with explicit WAL/checkpoint versioning rather than a field append.
+The TUI is a pure client of the existing gRPC service. Three RPCs:
+- `GetFullState` → `FullStateSnapshot` (initial load and reconnect)
+- `SubscribeEvents` → stream of `HypervisorEvent` (live updates)
+- `DispatchCommand` → `CommandResponse` (user actions)
+
+The proto is at `crates/nexode-proto/proto/hypervisor.proto`. Do NOT modify it.
+
+### Existing Client Patterns
+
+`nexode-ctl` (`crates/nexode-ctl/src/main.rs`, 532 lines) already demonstrates:
+- Connecting to the daemon: `HypervisorClient::connect(addr)`
+- Fetching state: `client.get_full_state()`
+- Subscribing: `client.subscribe_events()`
+- Dispatching commands: `client.dispatch_command()`
+
+Use the same patterns in the TUI.
+
+### Architecture
+
+The TUI runs three concurrent tasks:
+1. gRPC event receiver (async, reads from event stream)
+2. Input handler (blocking, reads terminal key events via crossterm)
+3. Render loop (~15 FPS, draws to terminal via ratatui)
+
+These communicate through tokio channels. See the sprint prompt for the `tokio::select!` pattern.
