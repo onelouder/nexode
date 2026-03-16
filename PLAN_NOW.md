@@ -8,23 +8,23 @@
 - **Goal:** Sprint 4 — Engine Hardening + Module Decomposition
 - **Deadline:** 2026-03-29
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-4-engine-hardening` (to be created)
+- **Current Branch:** `agent/gpt/sprint-4-engine-hardening`
 - **Previous sprint:** Sprint 3 — Observer Loops + Safety (complete, merged to `main` at `9371feb`)
 
 ## Tasks
 
 ### Part 1: Engine Module Decomposition
 
-- [ ] Read and map `engine.rs` structure (~2700 lines, 74 functions)
-- [ ] Create `crates/nexode-daemon/src/engine/` directory module
-- [ ] Extract `DaemonConfig` and config structs → `engine/config.rs`
-- [ ] Extract `RuntimeState`, `ProjectRuntime`, `SlotRuntime`, `SlotDescriptor`, `MergeDescriptor` → `engine/runtime.rs`
-- [ ] Extract command handlers → `engine/commands.rs`
-- [ ] Extract slot lifecycle management → `engine/slots.rs`
-- [ ] Extract merge queue logic → `engine/merge.rs`
-- [ ] Extract event emission helpers → `engine/events.rs`
-- [ ] Move integration tests → `engine/tests.rs`
-- [ ] Verify all 62 tests pass, cargo fmt/check/clippy clean
+- [x] Read and map `engine.rs` structure (~2700 lines, 74 functions)
+- [x] Create `crates/nexode-daemon/src/engine/` directory module
+- [x] Extract `DaemonConfig` and config structs → `engine/config.rs`
+- [x] Extract `RuntimeState`, `ProjectRuntime`, `SlotRuntime`, `SlotDescriptor`, `MergeDescriptor` → `engine/runtime.rs`
+- [x] Extract command handlers → `engine/commands.rs`
+- [x] Extract slot lifecycle management → `engine/slots.rs`
+- [x] Extract merge queue logic → `engine/merge.rs`
+- [x] Extract event emission helpers → `engine/events.rs`
+- [x] Move integration tests → `engine/tests.rs`
+- [x] Verify `cargo fmt --all`, `cargo test -p nexode-daemon`, `cargo check --workspace`, and `cargo doc --workspace`
 - [ ] Commit decomposition separately
 
 ### Part 2: Fix I-016 — Task Transition Semantics
@@ -55,7 +55,13 @@
 
 ## Done This Sprint
 
-- (Sprint 4 not yet started)
+- Sprint 4 branch created from `origin/main`
+- `engine.rs` decomposed into `engine/` submodules with runtime, command, slot, merge, event, and test files
+- Part 1 verification passed:
+  - `cargo fmt --all`
+  - `cargo test -p nexode-daemon`
+  - `cargo check --workspace`
+  - `cargo doc --workspace`
 
 ## Done Previously (Sprint 3)
 
