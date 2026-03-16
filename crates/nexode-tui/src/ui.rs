@@ -247,13 +247,13 @@ fn status_style(level: StatusLevel) -> Style {
 
 fn status_style_for_task(raw: i32) -> Style {
     match TaskStatus::try_from(raw).unwrap_or(TaskStatus::Unspecified) {
-        TaskStatus::Working => Style::default().fg(Color::Green),
+        TaskStatus::Working => Style::default().fg(Color::Cyan),
         TaskStatus::Review => Style::default().fg(Color::Yellow),
-        TaskStatus::MergeQueue => Style::default().fg(Color::Cyan),
-        TaskStatus::Resolving => Style::default().fg(Color::Magenta),
-        TaskStatus::Paused => Style::default().fg(Color::Red),
+        TaskStatus::MergeQueue => Style::default().fg(Color::Blue),
+        TaskStatus::Resolving => Style::default().fg(Color::Red),
+        TaskStatus::Paused => Style::default().fg(Color::DarkGray),
         TaskStatus::Done => Style::default()
-            .fg(Color::White)
+            .fg(Color::Green)
             .add_modifier(Modifier::DIM),
         TaskStatus::Pending => Style::default().fg(Color::DarkGray),
         TaskStatus::Archived => Style::default()
