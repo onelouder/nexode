@@ -5,49 +5,34 @@
 
 ## Current Sprint
 
-- **Goal:** Sprint 5 — TUI Dashboard
-- **Deadline:** 2026-04-05
+- **Goal:** Sprint 6 — Integration Polish
+- **Deadline:** 2026-04-12
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-5-tui-dashboard`
-- **Status:** Implemented locally, awaiting review/push
-- **Previous sprint:** Sprint 4 — Engine Hardening + Module Decomposition (complete, merged to `main` at `ee82552`)
+- **Current Branch:** `agent/gpt/sprint-6-integration-polish` (to be created)
+- **Previous sprint:** Sprint 5 — TUI Dashboard (complete, merged to `main` at `4e5f6cf`)
 
 ## Tasks
 
-### Part 1: Crate Setup and gRPC Client
+### Part 1: TUI Fixes
 
-- [x] Create `crates/nexode-tui/` workspace member
-- [x] Add dependencies: `ratatui`, `crossterm`, `nexode-proto`, `tonic`, `tokio`, `clap`
-- [x] CLI args: `--addr <host:port>` (default `http://[::1]:50051`)
-- [x] Connect to daemon, fetch `FullStateSnapshot`, subscribe to events
-- [x] Create `src/state.rs` with `AppState`, `apply_event()`, `apply_snapshot()`
+- [ ] I-027: Fix event gap recovery to not drop the triggering event (`main.rs:322-330`)
+- [ ] I-028: Compute timezone offset at startup before tokio spawns threads, pass through `AppState`
 
-### Part 2: Dashboard Layout
+### Part 2: Daemon Fixes
 
-- [x] Create `src/ui.rs` with three-panel layout (header, main split, event log)
-- [x] Render project/slot tree (left panel) with status-colored indicators
-- [x] Render slot detail view (right panel)
-- [x] Render scrolling event log (bottom panel)
-- [x] Create `src/events.rs` with event-to-string formatting for all event types
+- [ ] I-025: Add `Some(Review) => Some(Review)` to `resume_target()` in `commands.rs` + test
+- [ ] I-007: Immediate merge queue drain after `enqueue_merge()` in `slots.rs`
 
-### Part 3: Keyboard Input and Command Dispatch
+### Part 3: Integration Test
 
-- [x] Create `src/input.rs` with key bindings (quit, navigate, pause, resume, kill)
-- [x] Command mode (`:`) for structured and free-form commands
-- [x] Dispatch commands via gRPC `DispatchCommand`
-- [x] Show `CommandResponse` result in header status text
+- [ ] Cross-crate integration test: daemon→TUI state flow via gRPC
+- [ ] Test event gap recovery end-to-end
 
-### Part 4: Async Architecture
+### Part 4: Cleanup
 
-- [x] Three-task `tokio::select!` loop (gRPC receiver, input handler, render tick)
-- [x] Input reader in `spawn_blocking` with channel forwarding
-- [x] ~15 FPS render tick
-
-### Part 5: Graceful Terminal Handling
-
-- [x] Raw mode + alternate screen on startup
-- [x] Cleanup on quit, Ctrl+C, and panic
-- [x] `Drop` guard + panic hook for terminal restoration
+- [ ] Add `--version` to TUI CLI (`main.rs` Cli struct)
+- [ ] Fix I-014: Update `docs/architecture/agent-harness.md` CLI flags
+- [ ] Add `--version` to daemon CLI if not present
 
 ## Blocked
 
@@ -55,24 +40,25 @@
 
 ## Done This Sprint
 
-- Added `nexode-tui` as a new workspace member and compiled it cleanly
-- Implemented a live gRPC client with snapshot bootstrap, event subscription, and gap recovery
-- Added ratatui dashboard rendering for project tree, slot detail, and event log
-- Added interactive key handling and command dispatch
-- Added state/event/command/CLI tests for the new crate
+- (Sprint 6 not yet started)
 
-## Verification
+## Done Previously (Sprint 5)
 
-- `cargo fmt --all`
-- `cargo test -p nexode-tui`
-- `cargo check --workspace`
-- `cargo clippy --workspace -- -D warnings`
-- `cargo build -p nexode-tui`
-- `cargo run -p nexode-tui -- --help`
+- New `nexode-tui` crate with three-panel dashboard
+- Live gRPC streaming with event gap recovery
+- Interactive controls: navigate, pause/resume/kill, command mode
+- Terminal cleanup on exit/signal/panic
+- 18 unit tests, status colors aligned to kanban spec (D-009)
+- Total: 88 tests (66 daemon + 4 ctl + 18 TUI)
+
+## Next Up
+
+- After Sprint 6: VS Code Extension (M3b) or further TUI enhancements
 
 ## Notes
 
-- Sprint 5 prompt: `.agents/prompts/sprint-5-codex.md`
-- The TUI stayed within the approved surface: no daemon or proto changes
-- `I-024` still limits observer-event specificity in the UI because the proto flattens loop/stuck/budget findings
-- `I-025` remains daemon-side; paused-from-review slots still need `:move <task-id> review` as the operator workaround
+- Sprint 6 prompt: `.agents/prompts/sprint-6-codex.md`
+- This is a **polish sprint** — small, focused fixes across existing crates
+- The integration test is the most complex deliverable — it proves daemon→TUI works end-to-end
+- Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`
+- Proto modifications are allowed only if needed for integration test fixtures

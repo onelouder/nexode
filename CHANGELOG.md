@@ -13,3 +13,4 @@
 - [2026-03-15] [gpt] Added Sprint 3 observer safety: loop detection, sandbox enforcement, event sequencing with gap recovery, uncertainty routing, and slot-scoped resume commands
 - [2026-03-15] [gpt] Completed Sprint 4: decomposed the daemon engine into modules, hardened pause/resume task transitions, moved observer git-status checks off the async runtime, and replaced daemon arg parsing with clap
 - [2026-03-15] [gpt] Added Sprint 5 `nexode-tui`: a ratatui dashboard with live gRPC state, event log, keyboard controls, command dispatch, and terminal-safe shutdown handling
+- [2026-03-15] [pc] Fixed TUI status colors to align with kanban spec D-009 (I-026)

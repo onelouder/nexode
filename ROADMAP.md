@@ -81,17 +81,32 @@
   - [x] Fix I-022: Async observer tick (`JoinSet::spawn_blocking`)
   - [x] Fix I-008: Daemon CLI with clap
 
-### M3a: Sprint 5 — TUI Dashboard 🔄
+### M3a: Sprint 5 — TUI Dashboard ✅
 - **Target:** 2026-04-05
-- **Status:** Ready for Codex
+- **Status:** Complete (merged 2026-03-15, commit `4e5f6cf`)
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-5-codex.md`
+- **Review:** `docs/reviews/sprint-5-review.md`
 - **Deliverables:**
-  - [ ] New `nexode-tui` crate with `ratatui` + `crossterm`
-  - [ ] Three-panel dashboard: project tree, slot detail, event log
-  - [ ] Live gRPC event streaming and state updates
-  - [ ] Interactive controls: navigate, pause/resume/kill, command mode
-  - [ ] Graceful terminal handling (raw mode, panic cleanup)
+  - [x] New `nexode-tui` crate with `ratatui` + `crossterm`
+  - [x] Three-panel dashboard: project tree, slot detail, event log
+  - [x] Live gRPC event streaming with gap recovery
+  - [x] Interactive controls: navigate, pause/resume/kill, command mode
+  - [x] Graceful terminal handling (raw mode, panic cleanup, signal handler)
+  - [x] 18 unit tests, status colors aligned to kanban spec (D-009)
+
+### M3a-polish: Sprint 6 — Integration Polish 🔄
+- **Target:** 2026-04-12
+- **Status:** Ready for Codex
+- **Agent:** gpt (Codex)
+- **Prompt:** `.agents/prompts/sprint-6-codex.md`
+- **Deliverables:**
+  - [ ] Fix I-027: Event gap recovery drops triggering event
+  - [ ] Fix I-028: Timezone offset at startup (not multi-threaded)
+  - [ ] Fix I-025: `resume_target()` handles Review state
+  - [ ] Fix I-007: Immediate merge queue drain on enqueue
+  - [ ] Cross-crate integration test (daemon→TUI via gRPC)
+  - [ ] CLI cleanup: `--version` flags, I-014 doc fix
 
 ### M3b: Phase 2 Continuation — VS Code Extension ⏳
 - **Target:** TBD

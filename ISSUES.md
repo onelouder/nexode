@@ -277,6 +277,30 @@
 - **Details:** The transition table allows `Review → Paused`, and `pre_pause_status` correctly records `Some(Review)`. However, `resume_target()` only handles `Some(Working)` and `Some(MergeQueue)`, returning `None` for `Some(Review)`. This means a slot paused from Review cannot be resumed via `ResumeAgent` or `ResumeSlot` — the operator must use `MoveTask` instead. This matches the Kanban spec (which only defines Working and MergeQueue resume paths) but creates a UX asymmetry.
 - **When:** Low priority. Consider adding `Some(Review) → Some(Review)` to `resume_target()` when operator pause commands gain wider use.
 
+### ~~I-026: TUI status colors diverge from kanban spec (D-009)~~ RESOLVED
+
+- **Source:** Sprint 5 review (2026-03-15), finding F-01
+- **Module:** `crates/nexode-tui/src/ui.rs:248-262`
+- **Severity:** Medium
+- **Resolved:** Sprint 5 (2026-03-15), pre-merge fix at `994822b`
+- **Resolution:** Status colors aligned to kanban spec: WORKING→Cyan (Teal), MERGE_QUEUE→Blue, RESOLVING→Red, PAUSED→DarkGray (Gray), DONE→Green+Dim.
+
+### I-027: Event gap recovery drops triggering event
+
+- **Source:** Sprint 5 review (2026-03-15), finding F-02
+- **Module:** `crates/nexode-tui/src/main.rs:322-330`
+- **Severity:** Low
+- **Details:** When `run_grpc_receiver` detects an event sequence gap, it fetches a fresh snapshot and `continue`s the loop — the event that triggered the gap detection is silently discarded. If the snapshot's `last_event_sequence` is behind the dropped event, the TUI misses that state change.
+- **When:** Sprint 6.
+
+### I-028: TUI timestamps always UTC under multi-threaded tokio
+
+- **Source:** Sprint 5 review (2026-03-15), finding F-03
+- **Module:** `crates/nexode-tui/src/events.rs:112-117`
+- **Severity:** Low
+- **Details:** `time` crate's `current_local_offset()` always fails when multiple threads are running (soundness concern). Since the TUI runs under `#[tokio::main]`, timestamps silently fall back to UTC. Fix: compute offset once at startup before tokio spawns threads.
+- **When:** Sprint 6.
+
 ---
 
 ## Risks from External Analysis
