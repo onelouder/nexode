@@ -1,80 +1,93 @@
 ---
-agent: pc
+agent: gpt
 status: handoff
-from: pc
-timestamp: 2026-03-15T19:30:00-07:00
+from: gpt
+timestamp: 2026-03-15T22:05:00-07:00
 task: "Sprint 5 — TUI Dashboard"
-branch: "main"
-next: gpt
+branch: "agent/gpt/sprint-5-tui-dashboard"
+next: pc
 ---
 
-# Handoff: Sprint 5 Ready for Codex
+# Handoff: Sprint 5 TUI Dashboard Ready for Review
 
-## What Just Happened
+## What Landed
 
-Sprint 4 (Engine Hardening + Module Decomposition) was reviewed and merged to `main` at `ee82552`. All exit criteria met, all 70 tests pass, two low-severity findings noted (I-025 added).
+Sprint 5 is implemented locally on `agent/gpt/sprint-5-tui-dashboard`.
 
-Sprint 4 resolved:
-- **I-016:** Task transitions now context-aware with `pre_pause_status` tracking
-- **I-022:** Observer tick uses `JoinSet::spawn_blocking` for git-status
-- **I-008:** Daemon CLI migrated to `clap`
+New crate:
+- `crates/nexode-tui/`
 
-New finding: **I-025** (Low) — `Review → Paused` is un-resumable via `ResumeAgent`/`ResumeSlot`; `MoveTask` is the workaround.
+Key files:
+- `crates/nexode-tui/src/main.rs`
+- `crates/nexode-tui/src/state.rs`
+- `crates/nexode-tui/src/events.rs`
+- `crates/nexode-tui/src/input.rs`
+- `crates/nexode-tui/src/ui.rs`
 
-Sprint 4 review: `docs/reviews/sprint-4-review.md`
+Core behavior:
+- Connects to the daemon over gRPC with `--addr` (default `http://[::1]:50051`)
+- Fetches `FullStateSnapshot` on startup
+- Subscribes to `SubscribeEvents` and applies live updates into local `AppState`
+- Recovers from event gaps / `DATA_LOSS` by refetching snapshot
+- Renders a ratatui dashboard with:
+  - header bar
+  - project/slot tree
+  - selected slot detail
+  - reverse-chronological event log
+  - footer help / command mode bar
+- Supports keyboard input:
+  - `q` / `Ctrl+C` quit
+  - `↑` / `↓` navigate
+  - `Enter` select slot
+  - `p` pause selected slot
+  - `r` resume selected slot
+  - `k` kill selected slot
+  - `:` command mode
+  - `Esc` exit command mode
+- Dispatches structured commands via gRPC:
+  - `:move <task-id> <status>`
+  - `:resume-slot <slot-id> [instruction]`
+  - free-form text falls back to `SlotDispatch` when a slot is selected, otherwise `ChatDispatch`
+- Restores terminal state on normal exit, Ctrl+C / SIGTERM, and panic via cleanup guard + panic hook
 
-## Sprint 5 Scope
+## Verification
 
-Sprint 5 begins Phase 2 (M3) — the first real user-facing interface. Build a terminal dashboard (`nexode-tui`) that connects to the daemon via gRPC and provides:
+Passed locally:
+- `cargo fmt --all`
+- `cargo test -p nexode-tui`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo build -p nexode-tui`
+- `cargo run -p nexode-tui -- --help`
 
-1. **Live session overview** — project tree with slot status, budget tracking
-2. **Slot detail view** — selected slot's task, agent, status, tokens, cost
-3. **Event log** — scrolling feed of all daemon events (state changes, telemetry, observer alerts)
-4. **Interactive controls** — navigate tree, pause/resume/kill slots, command input mode
+`cargo test -p nexode-tui` currently has 18 tests covering:
+- state snapshot/event application
+- event formatting
+- command parsing
+- CLI parsing
 
-New crate: `crates/nexode-tui/` using `ratatui` + `crossterm`.
+## Important Notes for Review
 
-## Sprint 5 Prompt
+1. No daemon or proto changes were made.
+   Sprint 5 stayed inside the allowed surface: workspace wiring plus the new `nexode-tui` crate.
 
-`.agents/prompts/sprint-5-codex.md`
+2. `I-024` is still a proto limitation, not a TUI bug.
+   `ObserverAlert::LoopDetected` still flattens loop/stuck/budget-velocity into one proto variant, so the event log renders that bucket as `loop/stuck/budget` instead of pretending it can tell them apart.
 
-## Read First
+3. `I-025` is still open.
+   The TUI exposes resume through existing daemon commands, but a slot paused from `REVIEW` still inherits the daemon-side asymmetry. The operator workaround remains `:move <task-id> review`.
 
-- `AGENTS.md`
-- `.agents/openai.md`
-- `HANDOFF.md` (this file)
-- `PLAN_NOW.md`
-- `.agents/prompts/sprint-5-codex.md` — full sprint instructions
-- `crates/nexode-proto/proto/hypervisor.proto` — the TUI renders these entities
-- `crates/nexode-ctl/src/main.rs` — existing gRPC client patterns
-- `docs/architecture/kanban-state-machine.md` — Kanban columns define TUI status colors
+4. Event cost fields remain snapshot-driven.
+   The proto's telemetry event carries token delta and TPS, but not cost/session-budget deltas, so live token counts update immediately while cost values refresh from snapshots and budget alerts.
 
-## Context for Codex
+## Review Focus
 
-### Proto Surface
+- `AppState` correctness for snapshot replacement and incremental event application
+- gRPC gap recovery behavior in `main.rs`
+- command-mode parsing / dispatch ergonomics
+- terminal cleanup safety in `main.rs`
+- whether the three-panel ratatui layout is good enough for Sprint 5 without further daemon/proto changes
 
-The TUI is a pure client of the existing gRPC service. Three RPCs:
-- `GetFullState` → `FullStateSnapshot` (initial load and reconnect)
-- `SubscribeEvents` → stream of `HypervisorEvent` (live updates)
-- `DispatchCommand` → `CommandResponse` (user actions)
+## Next Step
 
-The proto is at `crates/nexode-proto/proto/hypervisor.proto`. Do NOT modify it.
-
-### Existing Client Patterns
-
-`nexode-ctl` (`crates/nexode-ctl/src/main.rs`, 532 lines) already demonstrates:
-- Connecting to the daemon: `HypervisorClient::connect(addr)`
-- Fetching state: `client.get_full_state()`
-- Subscribing: `client.subscribe_events()`
-- Dispatching commands: `client.dispatch_command()`
-
-Use the same patterns in the TUI.
-
-### Architecture
-
-The TUI runs three concurrent tasks:
-1. gRPC event receiver (async, reads from event stream)
-2. Input handler (blocking, reads terminal key events via crossterm)
-3. Render loop (~15 FPS, draws to terminal via ratatui)
-
-These communicate through tokio channels. See the sprint prompt for the `tokio::select!` pattern.
+PC review the branch for Sprint 5 readiness, then push / open review if clean.

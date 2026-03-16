@@ -1,0 +1,13 @@
+[package]
+name = "nexode-tui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.51", features = ["derive"] }
+crossterm = "0.28.1"
+nexode-proto = { path = "../nexode-proto" }
+ratatui = "0.29"
+time = { version = "0.3.44", features = ["formatting", "local-offset"] }
+tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tonic = { version = "0.14.5", features = ["transport"] }
