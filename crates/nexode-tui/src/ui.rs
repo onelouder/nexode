@@ -178,7 +178,7 @@ fn render_event_log(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         .collect::<Vec<_>>();
 
     let list = List::new(items).block(panel_block(
-        "Event Log",
+        state.event_log_title(),
         state.selected_panel_index == PANEL_LOG,
     ));
     frame.render_widget(list, area);

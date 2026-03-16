@@ -276,6 +276,7 @@ impl DaemonEngine {
                     );
                     if mode == AgentMode::FullAuto {
                         self.enqueue_merge(&slot_id)?;
+                        self.drain_merge_queues().await?;
                     } else {
                         self.set_task_status(&slot_id, TaskStatus::Review, Some(agent_id), None)?;
                     }

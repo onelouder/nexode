@@ -1,94 +1,140 @@
 ---
-agent: pc
+agent: gpt
 status: handoff
-from: pc
-timestamp: 2026-03-15T22:30:00-07:00
+from: gpt
+timestamp: 2026-03-15T23:55:00-07:00
 task: "Sprint 6 — Integration Polish"
-branch: "main"
-next: gpt
+branch: "agent/gpt/sprint-6-integration-polish"
+next: pc
 ---
 
-# Handoff: Sprint 6 Ready for Codex
+# Handoff: Sprint 6 Ready for PC Review
 
 ## What Just Happened
 
-Sprint 5 (TUI Dashboard) was reviewed and merged to `main` at `4e5f6cf`. All exit criteria met, 18 TUI tests pass, 66 daemon + 4 ctl tests pass, no regressions. Status colors fixed post-review to align with kanban spec (D-009). Three new issues filed: I-026 (resolved pre-merge), I-027, I-028.
+Sprint 6 is implemented on `agent/gpt/sprint-6-integration-polish`. This sprint closed four low-severity issues, added the first daemon→TUI gRPC integration test, and cleaned up the TUI/daemon CLI surface.
 
-Sprint 5 delivered:
-- New `nexode-tui` crate with `ratatui` + `crossterm`
-- Three-panel dashboard: project tree, slot detail, event log
-- Live gRPC streaming with event gap recovery
-- Interactive controls: navigate, pause/resume/kill, command mode
-- Terminal cleanup on exit/signal/panic
-- 18 unit tests
+Sprint 6 delivered:
+- I-027 fixed: TUI gap recovery now replays the triggering event when the refreshed snapshot is still behind it
+- I-028 fixed: local timezone offset is captured before Tokio startup and propagated into event formatting, with UTC fallback labeling
+- I-025 fixed: `ResumeSlot` and `ResumeAgent` can return paused Review tasks to `Review`
+- I-007 fixed: merge queue draining happens immediately at enqueue call sites
+- Added a cross-crate daemon/TUI integration test using real gRPC + `AppState`
+- Added `--version` coverage for `nexode-tui`
+- Updated the agent harness architecture doc to match the actual Claude/Codex CLI contract
 
-Sprint 5 review: `docs/reviews/sprint-5-review.md`
+Verification is green:
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `cargo build -p nexode-tui`
+- `cargo build -p nexode-daemon`
+- `cargo run -p nexode-tui -- --version`
+- `cargo run -p nexode-daemon -- --version`
 
-## Sprint 6 Scope
+Workspace test totals from the passing run:
+- `nexode-daemon` lib: 67 tests
+- `nexode-daemon` bin: 3 tests
+- `nexode-ctl`: 4 tests
+- `nexode-tui` lib: 17 tests
+- `nexode-tui` bin: 6 tests
+- `nexode-proto`: 0 tests
 
-Sprint 6 is a **polish and integration sprint** before the VS Code extension. It addresses accumulated low-severity issues, improves the TUI's event handling, and adds a cross-crate integration test that exercises the full daemon→TUI pipeline.
+Stability note:
+- The new server-backed daemon→TUI test initially hung on shutdown because the test kept the event stream and clients alive across daemon shutdown. The fix explicitly drops gRPC handles before signaling shutdown and applies `#[serial_test::serial]` to the new server-backed test, consistent with the existing daemon integration-test pattern.
 
-### Part 1: TUI Fixes (I-027, I-028)
+## Sprint 6 Status
 
-1. **I-027 — Event gap recovery should not drop the triggering event.** After fetching a snapshot on gap detection, also apply the triggering event if its sequence is beyond the snapshot's `last_event_sequence`.
-2. **I-028 — Compute local timezone offset at startup.** Capture `UtcOffset::current_local_offset()` in `main()` before the tokio runtime spawns threads, pass it through `AppState`, use it in `format_timestamp`. Label timestamps as UTC if offset detection fails.
+Sprint 6 is complete and ready for review. The branch should be reviewed as a focused polish sprint, not as a claim of full spec completion.
 
-### Part 2: Daemon Fixes (I-025, I-007)
+## Review Focus
 
-3. **I-025 — Add `Review` to `resume_target()`.** In `engine/commands.rs`, add `Some(TaskStatus::Review) => Some(TaskStatus::Review)` so slots paused from Review can be resumed without `MoveTask`. Add a test.
-4. **I-007 — Immediate merge queue drain on enqueue.** After `enqueue_merge()` in `engine/slots.rs`, call `drain_merge_queues()` immediately instead of waiting for the next tick. This reduces merge latency from up to 2s to near-zero.
+Please review:
+- `crates/nexode-tui/src/main.rs`
+- `crates/nexode-tui/src/events.rs`
+- `crates/nexode-tui/src/state.rs`
+- `crates/nexode-daemon/src/engine/commands.rs`
+- `crates/nexode-daemon/src/engine/slots.rs`
+- `crates/nexode-daemon/src/engine/tests.rs`
+- `docs/architecture/agent-harness.md`
 
-### Part 3: Integration Test
+Specific checks:
+- Gap recovery replays the triggering event only when the snapshot does not already cover it
+- TUI timestamp formatting no longer calls `current_local_offset()` under Tokio
+- Review-paused slots resume correctly without reopening `MoveTask`
+- Merge enqueue paths do not wait for the next tick
+- The new gRPC integration test is stable and appropriately scoped
+- The new `nexode-tui` library split avoids duplicate module test execution while keeping the binary surface unchanged
 
-5. **Cross-crate integration test.** Create `tests/integration/` (workspace-level) or add to `nexode-tui/tests/`:
-   - Start daemon in-process with mock config
-   - Connect TUI's `AppState` (no terminal rendering) via gRPC
-   - Dispatch commands, verify state updates flow through
-   - Verify event gap recovery works end-to-end
-   - This is the first test that proves daemon→TUI works together
+## Risks / Non-Blocking Gaps
 
-### Part 4: Cleanup
+Known non-blocking risks in this branch:
+- `drive_engine_until` timeout in daemon test support increased from 3s to 5s to remove full-suite scheduler flakiness. This improves stability but is still test-only timing tolerance, not a runtime change.
+- The new gRPC integration test proves snapshot/event/command flow through the real daemon transport, but it does not yet validate live agent stdout streaming because the current proto/event model does not expose raw output lines.
 
-6. **Add `--version` to TUI CLI** (F-07 from Sprint 5 review)
-7. **Update `I-014`** — fix agent-harness architecture doc CLI flags
-8. **Add `--version` to daemon CLI** if missing
+Broader gaps still outside Sprint 6 scope:
+- `I-018`
+- `I-019`
+- `I-024`
+- Spec-alignment gap: autonomy tiers are still not fully implemented as specified. `manual` and `plan` mode semantics remain simplified runtime behavior rather than true pre-execution approval checkpoints.
+- Spec-alignment gap: `ChatDispatch` is still effectively a no-op command path in the daemon, so natural-language orchestration is not yet real.
+- Spec-alignment gap: the TUI is a working dashboard, but not yet the full Phase 2 command-center UX from the specification (no agent grid, no fuzzy search, no project cycling/focus modes, no HITL modal).
 
-## Sprint 6 Prompt
+## PC Review Prompt
 
-`.agents/prompts/sprint-6-codex.md`
+Review branch `agent/gpt/sprint-6-integration-polish` against `main` for Sprint 6 merge readiness.
 
-## Read First
-
+Read first:
 - `AGENTS.md`
 - `.agents/openai.md`
-- `HANDOFF.md` (this file)
+- `HANDOFF.md`
 - `PLAN_NOW.md`
-- `.agents/prompts/sprint-6-codex.md` — full sprint instructions
-- `ISSUES.md` — focus on I-007, I-025, I-027, I-028
-- `docs/reviews/sprint-5-review.md` — context for TUI fixes
+- `.agents/prompts/sprint-6-codex.md`
+- `ISSUES.md`
+- `docs/reviews/sprint-5-review.md`
 
-## Context for Codex
+Primary files:
+- `crates/nexode-tui/src/main.rs`
+- `crates/nexode-tui/src/events.rs`
+- `crates/nexode-tui/src/state.rs`
+- `crates/nexode-tui/src/ui.rs`
+- `crates/nexode-daemon/src/engine/commands.rs`
+- `crates/nexode-daemon/src/engine/slots.rs`
+- `crates/nexode-daemon/src/engine/test_support.rs`
+- `crates/nexode-daemon/src/engine/tests.rs`
+- `docs/architecture/agent-harness.md`
 
-### TUI Source
+Please focus on:
+- I-027 correctness: gap recovery replays the triggering event only when snapshot state is behind it
+- I-028 correctness: timezone offset captured before Tokio runtime and used consistently in event formatting
+- I-025 correctness: `Review -> Paused -> ResumeSlot/ResumeAgent -> Review`
+- I-007 correctness: merge queue drains immediately on enqueue, not only on engine tick
+- Integration quality: the new daemon→TUI gRPC test is the right scope, uses the real transport, and is stable
+- Cleanup quality: `--version` works for both binaries; harness architecture doc now matches actual CLI flags
 
-The TUI crate at `crates/nexode-tui/` has 5 source files:
-- `main.rs` — gRPC bootstrap, event loop, command dispatch, terminal cleanup
-- `state.rs` — `AppState`, `apply_event`, `apply_snapshot`
-- `events.rs` — event formatting with `format_timestamp`
-- `input.rs` — key bindings, command parsing
-- `ui.rs` — dashboard rendering
+Already verified locally:
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `cargo build -p nexode-tui`
+- `cargo build -p nexode-daemon`
+- `cargo run -p nexode-tui -- --version`
+- `cargo run -p nexode-daemon -- --version`
 
-### Daemon Engine
+Please respond in code-review format:
+- Findings first, ordered by severity
+- Include file references
+- Then open questions / assumptions
+- Then merge recommendation:
+  - `ready`
+  - `ready with follow-ups`
+  - `not ready`
 
-The engine is decomposed into `crates/nexode-daemon/src/engine/`:
-- `commands.rs` — command dispatch, `resume_target()`, `is_valid_task_transition()`
-- `slots.rs` — slot lifecycle, `enqueue_merge()`
-- `merge.rs` — merge execution
-- `mod.rs` — engine loop, `drain_merge_queues()`
+Open follow-ups not addressed here:
+- `I-018`
+- `I-019`
+- `I-024`
 
-### Test Baseline
-
-- Daemon: 63 lib + 3 bin = 66 tests
-- Ctl: 4 tests
-- TUI: 18 tests
-- Total: 88 tests
+If review is clean, merge `agent/gpt/sprint-6-integration-polish`.

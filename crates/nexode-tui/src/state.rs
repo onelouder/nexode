@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use crate::events::{EventLogEntry, format_event_log_entry};
 use nexode_proto::hypervisor_event;
 use nexode_proto::{AgentSlot, FullStateSnapshot, HypervisorEvent, Project, TaskNode};
+use time::UtcOffset;
 
 const MAX_EVENT_LOG: usize = 100;
 
@@ -49,6 +50,7 @@ pub struct SelectedSlotDetails<'a> {
 
 #[derive(Debug, Clone)]
 pub struct AppState {
+    pub local_offset: UtcOffset,
     pub projects: Vec<Project>,
     pub task_dag: Vec<TaskNode>,
     pub total_session_cost: f64,
@@ -64,7 +66,14 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
+        Self::with_local_offset(UtcOffset::UTC)
+    }
+}
+
+impl AppState {
+    pub fn with_local_offset(local_offset: UtcOffset) -> Self {
         Self {
+            local_offset,
             projects: Vec::new(),
             task_dag: Vec::new(),
             total_session_cost: 0.0,
@@ -78,9 +87,6 @@ impl Default for AppState {
             status_message: None,
         }
     }
-}
-
-impl AppState {
     pub fn apply_snapshot(&mut self, snapshot: FullStateSnapshot) {
         self.projects = snapshot.projects;
         self.task_dag = snapshot.task_dag;
@@ -261,9 +267,18 @@ impl AppState {
     }
 
     fn push_log_entry(&mut self, event: &HypervisorEvent) {
-        self.event_log.push_front(format_event_log_entry(event));
+        self.event_log
+            .push_front(format_event_log_entry(event, self.local_offset));
         while self.event_log.len() > MAX_EVENT_LOG {
             self.event_log.pop_back();
+        }
+    }
+
+    pub fn event_log_title(&self) -> &'static str {
+        if self.local_offset == UtcOffset::UTC {
+            "Event Log (UTC)"
+        } else {
+            "Event Log"
         }
     }
 
@@ -340,7 +355,7 @@ mod tests {
 
     #[test]
     fn apply_snapshot_replaces_core_state() {
-        let mut state = AppState::default();
+        let mut state = AppState::with_local_offset(UtcOffset::from_hms(-7, 0, 0).unwrap());
         state.selected_slot_id = Some("missing".to_string());
         state.apply_snapshot(sample_snapshot());
 
@@ -354,7 +369,7 @@ mod tests {
 
     #[test]
     fn apply_event_updates_slot_and_task_state() {
-        let mut state = AppState::default();
+        let mut state = AppState::with_local_offset(UtcOffset::from_hms(-7, 0, 0).unwrap());
         state.apply_snapshot(sample_snapshot());
 
         state.apply_event(HypervisorEvent {
@@ -409,7 +424,7 @@ mod tests {
 
     #[test]
     fn telemetry_event_increments_slot_tokens() {
-        let mut state = AppState::default();
+        let mut state = AppState::with_local_offset(UtcOffset::from_hms(-7, 0, 0).unwrap());
         state.apply_snapshot(sample_snapshot());
 
         state.apply_event(HypervisorEvent {
@@ -431,7 +446,7 @@ mod tests {
 
     #[test]
     fn tree_selection_picks_highlighted_slot() {
-        let mut state = AppState::default();
+        let mut state = AppState::with_local_offset(UtcOffset::from_hms(-7, 0, 0).unwrap());
         state.apply_snapshot(sample_snapshot());
         state.selected_tree_index = 1;
 
@@ -444,7 +459,7 @@ mod tests {
 
     #[test]
     fn active_agent_prefers_highlighted_slot() {
-        let mut state = AppState::default();
+        let mut state = AppState::with_local_offset(UtcOffset::from_hms(-7, 0, 0).unwrap());
         state.apply_snapshot(sample_snapshot());
         state.selected_tree_index = 1;
 
@@ -453,7 +468,7 @@ mod tests {
 
     #[test]
     fn event_log_keeps_most_recent_hundred_entries() {
-        let mut state = AppState::default();
+        let mut state = AppState::with_local_offset(UtcOffset::from_hms(-7, 0, 0).unwrap());
         state.apply_snapshot(sample_snapshot());
 
         for sequence in 43..=160 {
@@ -481,5 +496,12 @@ mod tests {
             state.event_log.back().map(|entry| entry.event_sequence),
             Some(61)
         );
+    }
+
+    #[test]
+    fn event_log_title_labels_utc_when_using_utc_offset() {
+        let state = AppState::default();
+
+        assert_eq!(state.event_log_title(), "Event Log (UTC)");
     }
 }

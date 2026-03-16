@@ -25,5 +25,6 @@ uuid = { version = "1.18.1", features = ["serde", "v4"] }
 wait-timeout = "0.2.1"
 
 [dev-dependencies]
+nexode-tui = { path = "../nexode-tui" }
 serial_test = "3.2.0"
 tempfile = "3.23.0"

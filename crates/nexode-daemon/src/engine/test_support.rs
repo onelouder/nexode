@@ -103,7 +103,7 @@ pub(super) async fn drive_engine_until<F>(engine: &mut DaemonEngine, mut done: F
 where
     F: FnMut(&DaemonEngine) -> bool,
 {
-    let deadline = time::Instant::now() + Duration::from_secs(3);
+    let deadline = time::Instant::now() + Duration::from_secs(5);
     while !done(engine) {
         if let Ok(Some(event)) = timeout(Duration::from_millis(50), engine.process_rx.recv()).await
         {

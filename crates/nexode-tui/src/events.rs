@@ -20,11 +20,11 @@ pub struct EventLogEntry {
     pub severity: EventSeverity,
 }
 
-pub fn format_event_log_entry(event: &HypervisorEvent) -> EventLogEntry {
+pub fn format_event_log_entry(event: &HypervisorEvent, local_offset: UtcOffset) -> EventLogEntry {
     EventLogEntry {
         event_sequence: event.event_sequence,
         timestamp_ms: event.timestamp_ms,
-        timestamp_label: format_timestamp(event.timestamp_ms),
+        timestamp_label: format_timestamp(event.timestamp_ms, local_offset),
         message: format_event_message(event),
         severity: event_severity(event),
     }
@@ -109,11 +109,8 @@ fn event_severity(event: &HypervisorEvent) -> EventSeverity {
     }
 }
 
-fn format_timestamp(timestamp_ms: u64) -> String {
-    match UtcOffset::current_local_offset() {
-        Ok(offset) => format_timestamp_with_offset(timestamp_ms, offset),
-        Err(_) => format_timestamp_with_offset(timestamp_ms, UtcOffset::UTC),
-    }
+fn format_timestamp(timestamp_ms: u64, local_offset: UtcOffset) -> String {
+    format_timestamp_with_offset(timestamp_ms, local_offset)
 }
 
 fn format_timestamp_with_offset(timestamp_ms: u64, offset: UtcOffset) -> String {
@@ -203,7 +200,7 @@ mod tests {
             )),
         };
 
-        let formatted = format_event_log_entry(&event);
+        let formatted = format_event_log_entry(&event, UtcOffset::UTC);
 
         assert!(
             formatted
@@ -231,7 +228,7 @@ mod tests {
         };
 
         assert_eq!(
-            format_event_log_entry(&event).severity,
+            format_event_log_entry(&event, UtcOffset::UTC).severity,
             EventSeverity::Critical
         );
     }
@@ -253,7 +250,7 @@ mod tests {
             })),
         };
 
-        let formatted = format_event_log_entry(&event);
+        let formatted = format_event_log_entry(&event, UtcOffset::UTC);
         assert!(formatted.message.contains("sandbox outside allowlist"));
         assert_eq!(formatted.severity, EventSeverity::Critical);
     }
@@ -276,9 +273,24 @@ mod tests {
         };
 
         assert!(
-            format_event_log_entry(&event)
+            format_event_log_entry(&event, UtcOffset::UTC)
                 .message
                 .contains("loop/stuck/budget")
         );
+    }
+
+    #[test]
+    fn formats_timestamp_with_supplied_offset() {
+        let event = HypervisorEvent {
+            event_id: "evt-5".to_string(),
+            timestamp_ms: 0,
+            barrier_id: String::new(),
+            event_sequence: 14,
+            payload: None,
+        };
+
+        let formatted = format_event_log_entry(&event, UtcOffset::from_hms(2, 0, 0).unwrap());
+
+        assert_eq!(formatted.timestamp_label, "02:00:00");
     }
 }
