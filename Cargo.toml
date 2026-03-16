@@ -3,5 +3,6 @@ members = [
     "crates/nexode-daemon",
     "crates/nexode-proto",
     "crates/nexode-ctl",
+    "crates/nexode-tui",
 ]
 resolver = "2"

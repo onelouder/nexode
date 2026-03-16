@@ -8,45 +8,46 @@
 - **Goal:** Sprint 5 — TUI Dashboard
 - **Deadline:** 2026-04-05
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-5-tui-dashboard` (to be created)
+- **Current Branch:** `agent/gpt/sprint-5-tui-dashboard`
+- **Status:** Implemented locally, awaiting review/push
 - **Previous sprint:** Sprint 4 — Engine Hardening + Module Decomposition (complete, merged to `main` at `ee82552`)
 
 ## Tasks
 
 ### Part 1: Crate Setup and gRPC Client
 
-- [ ] Create `crates/nexode-tui/` workspace member
-- [ ] Add dependencies: `ratatui`, `crossterm`, `nexode-proto`, `tonic`, `tokio`, `clap`
-- [ ] CLI args: `--addr <host:port>` (default `http://[::1]:50051`)
-- [ ] Connect to daemon, fetch `FullStateSnapshot`, subscribe to events
-- [ ] Create `src/state.rs` with `AppState`, `apply_event()`, `apply_snapshot()`
+- [x] Create `crates/nexode-tui/` workspace member
+- [x] Add dependencies: `ratatui`, `crossterm`, `nexode-proto`, `tonic`, `tokio`, `clap`
+- [x] CLI args: `--addr <host:port>` (default `http://[::1]:50051`)
+- [x] Connect to daemon, fetch `FullStateSnapshot`, subscribe to events
+- [x] Create `src/state.rs` with `AppState`, `apply_event()`, `apply_snapshot()`
 
 ### Part 2: Dashboard Layout
 
-- [ ] Create `src/ui.rs` with three-panel layout (header, main split, event log)
-- [ ] Render project/slot tree (left panel) with status-colored indicators
-- [ ] Render slot detail view (right panel)
-- [ ] Render scrolling event log (bottom panel)
-- [ ] Create `src/events.rs` with event-to-string formatting for all event types
+- [x] Create `src/ui.rs` with three-panel layout (header, main split, event log)
+- [x] Render project/slot tree (left panel) with status-colored indicators
+- [x] Render slot detail view (right panel)
+- [x] Render scrolling event log (bottom panel)
+- [x] Create `src/events.rs` with event-to-string formatting for all event types
 
 ### Part 3: Keyboard Input and Command Dispatch
 
-- [ ] Create `src/input.rs` with key bindings (quit, navigate, pause, resume, kill)
-- [ ] Command mode (`:`) for structured and free-form commands
-- [ ] Dispatch commands via gRPC `DispatchCommand`
-- [ ] Show `CommandResponse` result in status bar
+- [x] Create `src/input.rs` with key bindings (quit, navigate, pause, resume, kill)
+- [x] Command mode (`:`) for structured and free-form commands
+- [x] Dispatch commands via gRPC `DispatchCommand`
+- [x] Show `CommandResponse` result in header status text
 
 ### Part 4: Async Architecture
 
-- [ ] Three-task `tokio::select!` loop (gRPC receiver, input handler, render tick)
-- [ ] Input reader in `spawn_blocking` with channel forwarding
-- [ ] ~15 FPS render tick
+- [x] Three-task `tokio::select!` loop (gRPC receiver, input handler, render tick)
+- [x] Input reader in `spawn_blocking` with channel forwarding
+- [x] ~15 FPS render tick
 
 ### Part 5: Graceful Terminal Handling
 
-- [ ] Raw mode + alternate screen on startup
-- [ ] Cleanup on quit, Ctrl+C, and panic
-- [ ] `Drop` guard or panic hook for terminal restoration
+- [x] Raw mode + alternate screen on startup
+- [x] Cleanup on quit, Ctrl+C, and panic
+- [x] `Drop` guard + panic hook for terminal restoration
 
 ## Blocked
 
@@ -54,25 +55,24 @@
 
 ## Done This Sprint
 
-- (Sprint 5 not yet started)
+- Added `nexode-tui` as a new workspace member and compiled it cleanly
+- Implemented a live gRPC client with snapshot bootstrap, event subscription, and gap recovery
+- Added ratatui dashboard rendering for project tree, slot detail, and event log
+- Added interactive key handling and command dispatch
+- Added state/event/command/CLI tests for the new crate
 
-## Done Previously (Sprint 4)
+## Verification
 
-- Decomposed `engine.rs` (~2700 lines) into `engine/` directory with 8 sub-modules
-- I-016 resolved: `pre_pause_status` tracking for Kanban-compliant transitions
-- I-022 resolved: Observer tick uses `JoinSet::spawn_blocking`
-- I-008 resolved: Daemon CLI migrated to `clap`
-- 70 tests total (63 daemon lib + 3 daemon bin + 4 ctl), all passing
-
-## Next Up
-
-- After Sprint 5: VS Code extension (M3 continuation), or Phase 2 polish sprint
+- `cargo fmt --all`
+- `cargo test -p nexode-tui`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo build -p nexode-tui`
+- `cargo run -p nexode-tui -- --help`
 
 ## Notes
 
 - Sprint 5 prompt: `.agents/prompts/sprint-5-codex.md`
-- The TUI is a **new crate** — do NOT modify daemon, proto, or ctl crates
-- Proto surface: `GetFullState`, `SubscribeEvents`, `DispatchCommand`
-- Use `ratatui` built-in widgets, keep it functional over pretty
-- Minimum terminal: 80x24
-- Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`
+- The TUI stayed within the approved surface: no daemon or proto changes
+- `I-024` still limits observer-event specificity in the UI because the proto flattens loop/stuck/budget findings
+- `I-025` remains daemon-side; paused-from-review slots still need `:move <task-id> review` as the operator workaround
