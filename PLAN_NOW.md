@@ -5,34 +5,42 @@
 
 ## Current Sprint
 
-- **Goal:** Sprint 6 — Integration Polish
-- **Deadline:** 2026-04-12
+- **Goal:** Sprint 7 — TUI Command Hardening
+- **Deadline:** 2026-04-19
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-6-integration-polish`
-- **Previous sprint:** Sprint 5 — TUI Dashboard (complete, merged to `main` at `4e5f6cf`)
+- **Current Branch:** `agent/gpt/sprint-7-tui-command-hardening` (to be created)
+- **Previous sprint:** Sprint 6 — Integration Polish (complete, merged to `main` at `3ae2ffd`)
 
 ## Tasks
 
-### Part 1: TUI Fixes
+### Part 1: Reconnection
 
-- [x] I-027: Fix event gap recovery to not drop the triggering event (`main.rs:322-330`)
-- [x] I-028: Compute timezone offset at startup before tokio spawns threads, pass through `AppState`
+- [ ] Add `ConnectionStatus` enum to `AppState`
+- [ ] Auto-reconnect on gRPC disconnect with exponential backoff (1s→30s)
+- [ ] Header bar connection status indicator
+- [ ] Block command dispatch when disconnected (show status message)
+- [ ] Event log entries for disconnect/reconnect
+- [ ] Tests: connection state transitions, command rejection when disconnected
 
-### Part 2: Daemon Fixes
+### Part 2: Command UX
 
-- [x] I-025: Add `Some(Review) => Some(Review)` to `resume_target()` in `commands.rs` + test
-- [x] I-007: Immediate merge queue drain after `enqueue_merge()` in `slots.rs`
+- [ ] Command history (↑/↓ in command mode, 50 entry cap)
+- [ ] Status bar feedback with 5-second auto-clear
+- [ ] Tab-complete for slot IDs in `:move` and `:resume-slot`
+- [ ] Tests: history cycling, tab-complete matching
 
-### Part 3: Integration Test
+### Part 3: Help Overlay
 
-- [x] Cross-crate integration test: daemon→TUI state flow via gRPC
-- [x] Test event gap recovery end-to-end via snapshot+event replay logic
+- [ ] `?` toggles keybinding reference overlay
+- [ ] Overlay renders on top of dashboard
+- [ ] Only `?` and quit keys active while help is visible
+- [ ] Test: help toggle state
 
-### Part 4: Cleanup
+### Part 4: Issue Fixes
 
-- [x] Add `--version` to TUI CLI (`main.rs` Cli struct)
-- [x] Fix I-014: Update `docs/architecture/agent-harness.md` CLI flags
-- [x] Add `--version` to daemon CLI if not present
+- [ ] I-019: `demo.sh` waits for DONE after MoveTask
+- [ ] I-024 (partial): Parse LoopDetected reason strings for specific labels
+- [ ] Test: reason string parsing for Loop/Stuck/Budget labels
 
 ## Blocked
 
@@ -40,30 +48,23 @@
 
 ## Done This Sprint
 
+- (Sprint 7 not yet started)
+
+## Done Previously (Sprint 6)
+
 - Fixed TUI event-gap replay and startup timezone capture
 - Fixed Review resume behavior and immediate merge queue draining
 - Added cross-crate daemon→TUI gRPC integration coverage
-- Added TUI `--version` coverage and corrected harness CLI architecture docs
-- Verified the full workspace and both binary version surfaces
-
-## Done Previously (Sprint 5)
-
-- New `nexode-tui` crate with three-panel dashboard
-- Live gRPC streaming with event gap recovery
-- Interactive controls: navigate, pause/resume/kill, command mode
-- Terminal cleanup on exit/signal/panic
-- 18 unit tests, status colors aligned to kanban spec (D-009)
-- Total: 88 tests (66 daemon + 4 ctl + 18 TUI)
+- Added TUI `--version` and corrected harness CLI architecture docs
+- 97 tests total (70 daemon + 4 ctl + 23 TUI)
 
 ## Next Up
 
-- PC review of `agent/gpt/sprint-6-integration-polish`
-- After Sprint 6: VS Code Extension (M3b) or further TUI enhancements
+- After Sprint 7: VS Code Extension (M3b) — requires PC architecture docs first
 
 ## Notes
 
-- Sprint 6 prompt: `.agents/prompts/sprint-6-codex.md`
-- This is a **polish sprint** — small, focused fixes across existing crates
-- The integration test is the most complex deliverable — it proves daemon→TUI works end-to-end
-- Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`
-- Proto modifications are allowed only if needed for integration test fixtures
+- Sprint 7 prompt: `.agents/prompts/sprint-7-codex.md`
+- This is a **TUI-only sprint** — do NOT modify daemon, proto, or ctl crates
+- Only non-TUI change: `scripts/demo.sh` (I-019)
+- Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`

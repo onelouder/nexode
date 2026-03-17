@@ -95,11 +95,12 @@
   - [x] Graceful terminal handling (raw mode, panic cleanup, signal handler)
   - [x] 18 unit tests, status colors aligned to kanban spec (D-009)
 
-### M3a-polish: Sprint 6 — Integration Polish 🔄
+### M3a-polish: Sprint 6 — Integration Polish ✅
 - **Target:** 2026-04-12
-- **Status:** Implemented, pending review
+- **Status:** Complete (merged 2026-03-17, commit `3ae2ffd`)
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-6-codex.md`
+- **Review:** `docs/reviews/sprint-6-review.md`
 - **Deliverables:**
   - [x] Fix I-027: Event gap recovery drops triggering event
   - [x] Fix I-028: Timezone offset at startup (not multi-threaded)
@@ -107,6 +108,20 @@
   - [x] Fix I-007: Immediate merge queue drain on enqueue
   - [x] Cross-crate integration test (daemon→TUI via gRPC)
   - [x] CLI cleanup: `--version` flags, I-014 doc fix
+
+### M3a-harden: Sprint 7 — TUI Command Hardening 🔄
+- **Target:** 2026-04-19
+- **Status:** Ready for Codex
+- **Agent:** gpt (Codex)
+- **Prompt:** `.agents/prompts/sprint-7-codex.md`
+- **Deliverables:**
+  - [ ] Auto-reconnect on gRPC disconnect with backoff and status indicator
+  - [ ] Command history (↑/↓ in command mode)
+  - [ ] Status bar feedback with auto-clear
+  - [ ] Tab-complete for slot IDs
+  - [ ] Help overlay (`?` key)
+  - [ ] Fix I-019: demo.sh waits for DONE
+  - [ ] Improve I-024: parse LoopDetected reason strings
 
 ### M3b: Phase 2 Continuation — VS Code Extension ⏳
 - **Target:** TBD
@@ -141,7 +156,7 @@
 
 - [ ] `provider_config` deep merge for session cascade (I-004)
 - [ ] SQLite schema migration versioning (I-005)
-- [ ] Merge queue immediate drain on event (I-007)
+- [x] Merge queue immediate drain on event (I-007) → Sprint 6
 - [x] Replace manual arg parsing with clap (I-008) → Sprint 4
 - [x] Engine module decomposition (engine.rs is 64KB) → Sprint 4
 - [ ] Agent process re-attachment via PID (Option B recovery — deferred from Sprint 1)
