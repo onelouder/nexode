@@ -97,16 +97,16 @@
 
 ### M3a-polish: Sprint 6 — Integration Polish 🔄
 - **Target:** 2026-04-12
-- **Status:** Ready for Codex
+- **Status:** Implemented, pending review
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-6-codex.md`
 - **Deliverables:**
-  - [ ] Fix I-027: Event gap recovery drops triggering event
-  - [ ] Fix I-028: Timezone offset at startup (not multi-threaded)
-  - [ ] Fix I-025: `resume_target()` handles Review state
-  - [ ] Fix I-007: Immediate merge queue drain on enqueue
-  - [ ] Cross-crate integration test (daemon→TUI via gRPC)
-  - [ ] CLI cleanup: `--version` flags, I-014 doc fix
+  - [x] Fix I-027: Event gap recovery drops triggering event
+  - [x] Fix I-028: Timezone offset at startup (not multi-threaded)
+  - [x] Fix I-025: `resume_target()` handles Review state
+  - [x] Fix I-007: Immediate merge queue drain on enqueue
+  - [x] Cross-crate integration test (daemon→TUI via gRPC)
+  - [x] CLI cleanup: `--version` flags, I-014 doc fix
 
 ### M3b: Phase 2 Continuation — VS Code Extension ⏳
 - **Target:** TBD

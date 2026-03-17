@@ -876,6 +876,7 @@ dependencies = [
  "crc32fast",
  "glob",
  "nexode-proto",
+ "nexode-tui",
  "rusqlite",
  "serde",
  "serde_json",

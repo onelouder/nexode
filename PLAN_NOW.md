@@ -8,31 +8,31 @@
 - **Goal:** Sprint 6 — Integration Polish
 - **Deadline:** 2026-04-12
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-6-integration-polish` (to be created)
+- **Current Branch:** `agent/gpt/sprint-6-integration-polish`
 - **Previous sprint:** Sprint 5 — TUI Dashboard (complete, merged to `main` at `4e5f6cf`)
 
 ## Tasks
 
 ### Part 1: TUI Fixes
 
-- [ ] I-027: Fix event gap recovery to not drop the triggering event (`main.rs:322-330`)
-- [ ] I-028: Compute timezone offset at startup before tokio spawns threads, pass through `AppState`
+- [x] I-027: Fix event gap recovery to not drop the triggering event (`main.rs:322-330`)
+- [x] I-028: Compute timezone offset at startup before tokio spawns threads, pass through `AppState`
 
 ### Part 2: Daemon Fixes
 
-- [ ] I-025: Add `Some(Review) => Some(Review)` to `resume_target()` in `commands.rs` + test
-- [ ] I-007: Immediate merge queue drain after `enqueue_merge()` in `slots.rs`
+- [x] I-025: Add `Some(Review) => Some(Review)` to `resume_target()` in `commands.rs` + test
+- [x] I-007: Immediate merge queue drain after `enqueue_merge()` in `slots.rs`
 
 ### Part 3: Integration Test
 
-- [ ] Cross-crate integration test: daemon→TUI state flow via gRPC
-- [ ] Test event gap recovery end-to-end
+- [x] Cross-crate integration test: daemon→TUI state flow via gRPC
+- [x] Test event gap recovery end-to-end via snapshot+event replay logic
 
 ### Part 4: Cleanup
 
-- [ ] Add `--version` to TUI CLI (`main.rs` Cli struct)
-- [ ] Fix I-014: Update `docs/architecture/agent-harness.md` CLI flags
-- [ ] Add `--version` to daemon CLI if not present
+- [x] Add `--version` to TUI CLI (`main.rs` Cli struct)
+- [x] Fix I-014: Update `docs/architecture/agent-harness.md` CLI flags
+- [x] Add `--version` to daemon CLI if not present
 
 ## Blocked
 
@@ -40,7 +40,11 @@
 
 ## Done This Sprint
 
-- (Sprint 6 not yet started)
+- Fixed TUI event-gap replay and startup timezone capture
+- Fixed Review resume behavior and immediate merge queue draining
+- Added cross-crate daemon→TUI gRPC integration coverage
+- Added TUI `--version` coverage and corrected harness CLI architecture docs
+- Verified the full workspace and both binary version surfaces
 
 ## Done Previously (Sprint 5)
 
@@ -53,6 +57,7 @@
 
 ## Next Up
 
+- PC review of `agent/gpt/sprint-6-integration-polish`
 - After Sprint 6: VS Code Extension (M3b) or further TUI enhancements
 
 ## Notes

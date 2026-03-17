@@ -1,8 +1,3 @@
-mod events;
-mod input;
-mod state;
-mod ui;
-
 use std::io;
 use std::time::Duration;
 
@@ -12,7 +7,6 @@ use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use input::{Action, ParsedCommand};
 use nexode_proto::hypervisor_client::HypervisorClient;
 use nexode_proto::operator_command;
 use nexode_proto::{
@@ -20,9 +14,12 @@ use nexode_proto::{
     MoveTask, OperatorCommand, PauseAgent, ResumeAgent, ResumeSlot, SlotDispatch, StateRequest,
     SubscribeRequest,
 };
+use nexode_tui::input::{self, Action, ParsedCommand};
+use nexode_tui::state::{AppState, StatusLevel};
+use nexode_tui::ui;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use state::{AppState, StatusLevel};
+use time::UtcOffset;
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval};
 use tonic::Request;
@@ -39,7 +36,8 @@ const RENDER_INTERVAL: Duration = Duration::from_millis(66);
 #[derive(Debug, Parser)]
 #[command(
     name = "nexode-tui",
-    about = "Sprint 5 terminal dashboard client for the Nexode daemon"
+    about = "Sprint 5 terminal dashboard client for the Nexode daemon",
+    version
 )]
 struct Cli {
     #[arg(long, default_value = "http://[::1]:50051")]
@@ -53,21 +51,26 @@ enum GrpcMessage {
     Fatal(String),
 }
 
-#[tokio::main]
-async fn main() -> Result<(), DynError> {
+fn main() -> Result<(), DynError> {
     let cli = Cli::parse();
-    if let Err(error) = run(cli).await {
+    let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+    if let Err(error) = tokio_main(cli, local_offset) {
         eprintln!("{error}");
         return Err(error);
     }
     Ok(())
 }
 
-async fn run(cli: Cli) -> Result<(), DynError> {
+#[tokio::main]
+async fn tokio_main(cli: Cli, local_offset: UtcOffset) -> Result<(), DynError> {
+    run(cli, local_offset).await
+}
+
+async fn run(cli: Cli, local_offset: UtcOffset) -> Result<(), DynError> {
     let snapshot = fetch_snapshot(&cli.addr).await?;
     let mut command_client = connect_client(&cli.addr).await?;
 
-    let mut state = AppState::default();
+    let mut state = AppState::with_local_offset(local_offset);
     state.apply_snapshot(snapshot);
     state.set_status_message(
         format!("Connected to {}", cli.addr),
@@ -323,9 +326,18 @@ async fn run_grpc_receiver(addr: String, starting_sequence: u64, tx: mpsc::Sende
                 if last_sequence != 0 && event.event_sequence != last_sequence + 1 {
                     match fetch_snapshot(&addr).await {
                         Ok(snapshot) => {
-                            last_sequence = snapshot.last_event_sequence;
+                            let snapshot_sequence = snapshot.last_event_sequence;
+                            let replay_event = should_apply_event_after_gap(&snapshot, &event);
                             if tx.send(GrpcMessage::Snapshot(snapshot)).await.is_err() {
                                 break;
+                            }
+                            if replay_event {
+                                last_sequence = event.event_sequence;
+                                if tx.send(GrpcMessage::Event(event)).await.is_err() {
+                                    break;
+                                }
+                            } else {
+                                last_sequence = snapshot_sequence;
                             }
                             continue;
                         }
@@ -532,9 +544,14 @@ fn command_id() -> u128 {
         .as_millis()
 }
 
+fn should_apply_event_after_gap(snapshot: &FullStateSnapshot, event: &HypervisorEvent) -> bool {
+    event.event_sequence > snapshot.last_event_sequence
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nexode_proto::hypervisor_event;
 
     #[test]
     fn parses_default_cli_address() {
@@ -550,6 +567,15 @@ mod tests {
     }
 
     #[test]
+    fn help_and_version_flags_are_exposed() {
+        let help = Cli::try_parse_from(["nexode-tui", "--help"]).unwrap_err();
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+
+        let version = Cli::try_parse_from(["nexode-tui", "--version"]).unwrap_err();
+        assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+    }
+
+    #[test]
     fn formats_failed_command_response_with_outcome() {
         let rendered = format_command_response(&CommandResponse {
             success: false,
@@ -562,5 +588,51 @@ mod tests {
             rendered,
             "Command cmd-99 failed: slot not found (slot_not_found)"
         );
+    }
+
+    #[test]
+    fn gap_recovery_replays_triggering_event_when_snapshot_lags() {
+        let snapshot = FullStateSnapshot {
+            projects: Vec::new(),
+            task_dag: Vec::new(),
+            total_session_cost: 0.0,
+            session_budget_max_usd: 0.0,
+            last_event_sequence: 10,
+        };
+        let event = HypervisorEvent {
+            event_id: "evt-1".to_string(),
+            timestamp_ms: 0,
+            barrier_id: String::new(),
+            event_sequence: 11,
+            payload: Some(hypervisor_event::Payload::TaskStatusChanged(
+                nexode_proto::TaskStatusChanged {
+                    task_id: "slot-a".to_string(),
+                    new_status: nexode_proto::TaskStatus::Working as i32,
+                    agent_id: String::new(),
+                },
+            )),
+        };
+
+        assert!(should_apply_event_after_gap(&snapshot, &event));
+    }
+
+    #[test]
+    fn gap_recovery_skips_triggering_event_when_snapshot_catches_up() {
+        let snapshot = FullStateSnapshot {
+            projects: Vec::new(),
+            task_dag: Vec::new(),
+            total_session_cost: 0.0,
+            session_budget_max_usd: 0.0,
+            last_event_sequence: 11,
+        };
+        let event = HypervisorEvent {
+            event_id: "evt-1".to_string(),
+            timestamp_ms: 0,
+            barrier_id: String::new(),
+            event_sequence: 11,
+            payload: None,
+        };
+
+        assert!(!should_apply_event_after_gap(&snapshot, &event));
     }
 }

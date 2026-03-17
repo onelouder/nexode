@@ -125,13 +125,13 @@
 - **Fixed:** Sprint 2 (2026-03-15), branch `agent/gpt/sprint-2-real-agents`
 - **Resolution:** Full command acknowledgment via `oneshot::channel()`. Proto adds `command_id` and `CommandOutcome` enum. Engine validates slot existence and state transitions, returns `Executed`, `InvalidTransition`, or `SlotNotFound` through the oneshot. CLI prints formatted result. 5s timeout in production, 50ms in tests. Four tests cover the round-trip, timeout, and all outcome variants.
 
-### I-007: Merge queue drains on tick only (2s delay)
+### ~~I-007: Merge queue drains on tick only (2s delay)~~ RESOLVED
 
 - **Source:** Phase 0 review v2 (2026-03-14)
 - **Module:** `engine.rs`
 - **Severity:** Low
-- **Details:** `drain_merge_queues()` runs on the tick interval (default 2s), not immediately when a task enters MERGE_QUEUE via `enqueue_merge()`. For Phase 0 this is fine. For production, consider draining immediately on enqueue.
-- **When:** When merge latency matters (Phase 2+).
+- **Resolved:** Sprint 6 (2026-03-15), branch `agent/gpt/sprint-6-integration-polish`
+- **Resolution:** Merge queue draining now happens at enqueue call sites instead of waiting for the next engine tick. `move_task_to_merge_queue_drains_immediately` verifies that a task moved to `MERGE_QUEUE` reaches `DONE` in the same command path.
 
 ### ~~I-008: Daemon `main.rs` uses manual arg parsing instead of `clap`~~ RESOLVED
 
@@ -181,13 +181,13 @@
 - **Details:** `parse_space_delimited` returns `Some(ParsedTelemetry { all None })` for lines starting with `TOKENS ` that have no valid key=value pairs. Results in WAL entries with all-zero telemetry.
 - **When:** Low urgency — only affects the legacy `TOKENS` prefix format.
 
-### I-014: Architecture doc CLI flags out of date
+### ~~I-014: Architecture doc CLI flags out of date~~ RESOLVED
 
 - **Source:** Sprint 1 review (2026-03-15), finding F-009
 - **Module:** `docs/architecture/agent-harness.md`
 - **Severity:** Low
-- **Details:** Sprint instructions specified `codex --approval-mode full-auto`, but the implementation uses `codex exec --full-auto --json` (aligned to actual CLI). Architecture doc should be updated to match.
-- **When:** Next docs update by pc.
+- **Resolved:** Sprint 6 (2026-03-15), branch `agent/gpt/sprint-6-integration-polish`
+- **Resolution:** The harness architecture doc now matches the implementation: Claude uses `--verbose --output-format stream-json`, and Codex uses `codex exec --full-auto --json` with optional `--model`.
 
 ### ~~I-015: JSON substring matching in completion detection~~ FIXED
 
@@ -269,13 +269,13 @@
 - **Details:** `ObserverFindingKind::LoopDetected`, `Stuck`, and `BudgetVelocity` all map to the same proto variant `observer_alert::Detail::LoopDetected`. A UI client can't switch on the finding kind without parsing the `reason` string.
 - **When:** Phase 2/3 when building TUI or VS Code extension. Consider adding a `finding_kind` enum to the proto message or splitting into three variants.
 
-### I-025: `Review → Paused` creates un-resumable state via `ResumeAgent`/`ResumeSlot`
+### ~~I-025: `Review → Paused` creates un-resumable state via `ResumeAgent`/`ResumeSlot`~~ RESOLVED
 
 - **Source:** Sprint 4 review (2026-03-15), finding F-01
 - **Module:** `engine/commands.rs:235-241`
 - **Severity:** Low
-- **Details:** The transition table allows `Review → Paused`, and `pre_pause_status` correctly records `Some(Review)`. However, `resume_target()` only handles `Some(Working)` and `Some(MergeQueue)`, returning `None` for `Some(Review)`. This means a slot paused from Review cannot be resumed via `ResumeAgent` or `ResumeSlot` — the operator must use `MoveTask` instead. This matches the Kanban spec (which only defines Working and MergeQueue resume paths) but creates a UX asymmetry.
-- **When:** Low priority. Consider adding `Some(Review) → Some(Review)` to `resume_target()` when operator pause commands gain wider use.
+- **Resolved:** Sprint 6 (2026-03-15), branch `agent/gpt/sprint-6-integration-polish`
+- **Resolution:** `resume_target()` now returns `Some(Review)` for slots paused from Review. Both unit and engine tests verify `Review → Paused → ResumeSlot → Review`.
 
 ### ~~I-026: TUI status colors diverge from kanban spec (D-009)~~ RESOLVED
 
@@ -285,21 +285,21 @@
 - **Resolved:** Sprint 5 (2026-03-15), pre-merge fix at `994822b`
 - **Resolution:** Status colors aligned to kanban spec: WORKING→Cyan (Teal), MERGE_QUEUE→Blue, RESOLVING→Red, PAUSED→DarkGray (Gray), DONE→Green+Dim.
 
-### I-027: Event gap recovery drops triggering event
+### ~~I-027: Event gap recovery drops triggering event~~ RESOLVED
 
 - **Source:** Sprint 5 review (2026-03-15), finding F-02
 - **Module:** `crates/nexode-tui/src/main.rs:322-330`
 - **Severity:** Low
-- **Details:** When `run_grpc_receiver` detects an event sequence gap, it fetches a fresh snapshot and `continue`s the loop — the event that triggered the gap detection is silently discarded. If the snapshot's `last_event_sequence` is behind the dropped event, the TUI misses that state change.
-- **When:** Sprint 6.
+- **Resolved:** Sprint 6 (2026-03-15), branch `agent/gpt/sprint-6-integration-polish`
+- **Resolution:** TUI gap recovery now reapplies the triggering event when its sequence exceeds the refreshed snapshot. Tests cover both replay and no-replay cases.
 
-### I-028: TUI timestamps always UTC under multi-threaded tokio
+### ~~I-028: TUI timestamps always UTC under multi-threaded tokio~~ RESOLVED
 
 - **Source:** Sprint 5 review (2026-03-15), finding F-03
 - **Module:** `crates/nexode-tui/src/events.rs:112-117`
 - **Severity:** Low
-- **Details:** `time` crate's `current_local_offset()` always fails when multiple threads are running (soundness concern). Since the TUI runs under `#[tokio::main]`, timestamps silently fall back to UTC. Fix: compute offset once at startup before tokio spawns threads.
-- **When:** Sprint 6.
+- **Resolved:** Sprint 6 (2026-03-15), branch `agent/gpt/sprint-6-integration-polish`
+- **Resolution:** The TUI now captures `UtcOffset::current_local_offset()` in plain `main()` before the Tokio runtime starts, stores it in `AppState`, and passes it into event timestamp formatting. The log header explicitly labels UTC fallback mode.
 
 ---
 

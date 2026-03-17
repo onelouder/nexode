@@ -1,8 +1,10 @@
 use std::time::Duration;
 
+use nexode_proto::hypervisor_client::HypervisorClient;
 use nexode_proto::hypervisor_server::Hypervisor;
 use nexode_proto::observer_alert;
 use nexode_proto::{MoveTask, ResumeSlot, SlotDispatch};
+use nexode_tui::state::AppState;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
@@ -554,6 +556,231 @@ projects:
         engine.current_task_status("slot-a") == Some(TaskStatus::Review)
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn review_pause_can_resume_back_to_review() {
+    let fixture = DaemonFixture::new();
+    let session_path = fixture.write_session(
+        r#"
+version: "2.0"
+session:
+  name: "review-resume"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+    );
+
+    let config = fixture.config(session_path.clone());
+    let (mut engine, _service) = fixture.engine(session_path, config).await;
+
+    engine.start_slot("slot-a").await.expect("start slot");
+    drive_engine_until(&mut engine, |engine| {
+        engine.current_task_status("slot-a") == Some(TaskStatus::Review)
+    })
+    .await;
+
+    let pause = engine
+        .handle_command(OperatorCommand {
+            command_id: "pause-review".to_string(),
+            action: Some(operator_command::Action::MoveTask(MoveTask {
+                task_id: "slot-a".to_string(),
+                target: TaskStatus::Paused as i32,
+            })),
+        })
+        .await
+        .expect("pause review slot");
+    assert!(pause.success);
+    assert_eq!(
+        engine.current_task_status("slot-a"),
+        Some(TaskStatus::Paused)
+    );
+
+    let resume = engine
+        .handle_command(OperatorCommand {
+            command_id: "resume-review".to_string(),
+            action: Some(operator_command::Action::ResumeSlot(ResumeSlot {
+                slot_id: "slot-a".to_string(),
+                instruction: String::new(),
+            })),
+        })
+        .await
+        .expect("resume review slot");
+    assert!(resume.success);
+    assert_eq!(
+        engine.current_task_status("slot-a"),
+        Some(TaskStatus::Review)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn move_task_to_merge_queue_drains_immediately() {
+    let fixture = DaemonFixture::new();
+    let session_path = fixture.write_session(
+        r#"
+version: "2.0"
+session:
+  name: "immediate-merge"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    verify:
+      build: "test -d .nexode-mock"
+      test: "find .nexode-mock -maxdepth 1 -type f | grep -q ."
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+    );
+
+    let config = fixture.config(session_path.clone());
+    let (mut engine, _service) = fixture.engine(session_path, config).await;
+
+    engine.start_slot("slot-a").await.expect("start slot");
+    drive_engine_until(&mut engine, |engine| {
+        engine.current_task_status("slot-a") == Some(TaskStatus::Review)
+    })
+    .await;
+
+    let response = engine
+        .handle_command(OperatorCommand {
+            command_id: "merge-now".to_string(),
+            action: Some(operator_command::Action::MoveTask(MoveTask {
+                task_id: "slot-a".to_string(),
+                target: TaskStatus::MergeQueue as i32,
+            })),
+        })
+        .await
+        .expect("move task to merge queue");
+
+    assert!(response.success);
+    assert_eq!(engine.current_task_status("slot-a"), Some(TaskStatus::Done));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn tui_app_state_tracks_daemon_events_via_grpc() {
+    let fixture = DaemonFixture::new();
+    let session_path = fixture.write_session(
+        r#"
+version: "2.0"
+session:
+  name: "tui-integration"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let config = fixture.config(session_path);
+    let server = tokio::spawn(async move {
+        run_daemon_with_listener(config, listener, async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    let mut snapshot_client: HypervisorClient<tonic::transport::Channel> =
+        fixture.client(addr).await;
+    let snapshot = wait_for_status(&mut snapshot_client, "slot-a", TaskStatus::Review).await;
+    let mut app_state = AppState::default();
+    app_state.apply_snapshot(snapshot.clone());
+
+    let mut stream_client: HypervisorClient<tonic::transport::Channel> = fixture.client(addr).await;
+    let mut stream = stream_client
+        .subscribe_events(tonic::Request::new(nexode_proto::SubscribeRequest {
+            client_version: "tui-integration-test".to_string(),
+        }))
+        .await
+        .expect("subscribe events")
+        .into_inner();
+
+    let mut command_client: HypervisorClient<tonic::transport::Channel> =
+        fixture.client(addr).await;
+    let response = command_client
+        .dispatch_command(tonic::Request::new(OperatorCommand {
+            command_id: "pause-slot".to_string(),
+            action: Some(operator_command::Action::MoveTask(MoveTask {
+                task_id: "slot-a".to_string(),
+                target: TaskStatus::Paused as i32,
+            })),
+        }))
+        .await
+        .expect("dispatch pause")
+        .into_inner();
+    assert!(response.success);
+    assert_eq!(response.outcome, CommandOutcome::Executed as i32);
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let event = stream
+                .message()
+                .await
+                .expect("stream message")
+                .expect("event");
+            app_state.apply_event(event);
+            let status = app_state
+                .task_dag
+                .iter()
+                .find(|task| task.id == "slot-a")
+                .map(|task| task.status);
+            if status == Some(TaskStatus::Paused as i32) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("paused event should reach tui state");
+
+    drop(stream);
+    drop(stream_client);
+    drop(command_client);
+    drop(snapshot_client);
+    shutdown_tx.send(()).expect("signal shutdown");
+    timeout(Duration::from_secs(5), server)
+        .await
+        .expect("daemon should shut down before timeout")
+        .expect("join daemon task")
+        .expect("daemon exits cleanly");
+
+    assert_eq!(
+        app_state
+            .task_dag
+            .iter()
+            .find(|task| task.id == "slot-a")
+            .map(|task| task.status),
+        Some(TaskStatus::Paused as i32)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

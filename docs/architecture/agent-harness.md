@@ -84,10 +84,10 @@ Drives the `claude` CLI in non-interactive (headless) mode.
 
 - `build_command`:
   1. Writes a `CLAUDE.md` file into the worktree root containing the assembled context (task description, include/exclude patterns, recent diff summary, project README excerpt).
-  2. Returns command: `claude --print --model {model} "{task}"` with `cwd` set to the worktree.
+  2. Returns command: `claude --print --verbose --output-format stream-json --model {model} "{task}"` with `cwd` set to the worktree.
   3. Sets `ANTHROPIC_API_KEY` from `provider_config` if present.
-- `parse_telemetry`: Parses Claude Code's cost/token output from stderr. Look for lines matching patterns like `Token usage: {in} input, {out} output` and `Cost: ${amount}`.
-- `detect_completion`: Returns true on process exit. Claude Code in `--print` mode runs to completion and exits.
+- `parse_telemetry`: Parses Claude Code's final JSON summary line for token/cost data.
+- `detect_completion`: Returns true when Claude emits its JSON completion record (`{"type":"result", ...}`).
 
 **Context injection strategy:** Claude Code reads `CLAUDE.md` from the repo root automatically. The harness writes this file before launch, so no CLI flags are needed for context injection.
 
@@ -97,10 +97,10 @@ Drives the `codex` CLI in full-auto mode.
 
 - `build_command`:
   1. Writes a `.codex` instructions file into the worktree with context payload.
-  2. Returns command: `codex --approval-mode full-auto --model {model} "{task}"` with `cwd` set to the worktree.
+  2. Returns command: `codex exec --full-auto --json [--model {model}] "{task}"` with `cwd` set to the worktree. Omit `--model` when the session uses the CLI default model.
   3. Sets `OPENAI_API_KEY` from `provider_config` if present.
-- `parse_telemetry`: Parses Codex CLI's output for token/cost data.
-- `detect_completion`: Returns true on process exit.
+- `parse_telemetry`: Parses Codex CLI's final JSON summary line for token/cost data.
+- `detect_completion`: Returns true when Codex emits a JSON completion record such as `{"type":"turn.completed", ...}`.
 
 **Note:** Both real harness implementations should be verified against current CLI documentation before use. The exact flags and output formats may evolve. The key contract is: launch a process, capture output, detect completion.
 

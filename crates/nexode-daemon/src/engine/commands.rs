@@ -111,7 +111,7 @@ impl DaemonEngine {
                         &command_id,
                         CommandOutcome::InvalidTransition,
                         Some(format!(
-                            "slot `{slot_id}` cannot resume without a working or merge_queue pre-pause state"
+                            "slot `{slot_id}` cannot resume without a working, review, or merge_queue pre-pause state"
                         )),
                     ));
                 };
@@ -134,7 +134,7 @@ impl DaemonEngine {
                         &command_id,
                         CommandOutcome::InvalidTransition,
                         Some(format!(
-                            "slot `{slot_id}` cannot resume without a working or merge_queue pre-pause state"
+                            "slot `{slot_id}` cannot resume without a working, review, or merge_queue pre-pause state"
                         )),
                     ));
                 };
@@ -200,6 +200,7 @@ impl DaemonEngine {
         match target {
             TaskStatus::MergeQueue => {
                 self.enqueue_merge(task_id)?;
+                self.drain_merge_queues().await?;
             }
             TaskStatus::Working => {
                 self.start_slot(task_id).await?;
@@ -235,6 +236,7 @@ impl DaemonEngine {
     fn resume_target(&self, slot_id: &str) -> Option<TaskStatus> {
         match self.pre_pause_status(slot_id) {
             Some(TaskStatus::Working) => Some(TaskStatus::Working),
+            Some(TaskStatus::Review) => Some(TaskStatus::Review),
             Some(TaskStatus::MergeQueue) => Some(TaskStatus::MergeQueue),
             _ => None,
         }
@@ -269,7 +271,9 @@ fn is_valid_task_transition(
             | (Resolving, Done | Archived)
     ) || matches!(
         (current, target, pre_pause_status),
-        (Paused, Working, Some(Working)) | (Paused, MergeQueue, Some(MergeQueue))
+        (Paused, Working, Some(Working))
+            | (Paused, Review, Some(Review))
+            | (Paused, MergeQueue, Some(MergeQueue))
     )
 }
 
@@ -292,6 +296,15 @@ mod tests {
             TaskStatus::Paused,
             TaskStatus::MergeQueue,
             Some(TaskStatus::MergeQueue),
+        ));
+    }
+
+    #[test]
+    fn pause_from_review_resumes_to_review() {
+        assert!(is_valid_task_transition(
+            TaskStatus::Paused,
+            TaskStatus::Review,
+            Some(TaskStatus::Review),
         ));
     }
 
