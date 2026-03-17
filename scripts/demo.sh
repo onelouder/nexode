@@ -101,6 +101,17 @@ done
 echo "Queueing merge:"
 cargo run -p nexode-ctl -- --addr "${ADDR}" dispatch move-task slot-a merge-queue || true
 
+echo "Waiting for merge to complete..."
+for _ in $(seq 1 15); do
+  STATUS_OUTPUT="$(cargo run -p nexode-ctl -- --addr "${ADDR}" status 2>/dev/null || true)"
+  echo "${STATUS_OUTPUT}"
+  if grep -Eq 'slot slot-a[[:space:]]+status done' <<<"${STATUS_OUTPUT}"; then
+    echo "Merge complete."
+    break
+  fi
+  sleep 1
+done
+
 echo "Final status:"
 cargo run -p nexode-ctl -- --addr "${ADDR}" status
 

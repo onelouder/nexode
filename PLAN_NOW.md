@@ -8,39 +8,39 @@
 - **Goal:** Sprint 7 — TUI Command Hardening
 - **Deadline:** 2026-04-19
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-7-tui-command-hardening` (to be created)
+- **Current Branch:** `agent/gpt/sprint-7-tui-command-hardening`
 - **Previous sprint:** Sprint 6 — Integration Polish (complete, merged to `main` at `3ae2ffd`)
 
 ## Tasks
 
 ### Part 1: Reconnection
 
-- [ ] Add `ConnectionStatus` enum to `AppState`
-- [ ] Auto-reconnect on gRPC disconnect with exponential backoff (1s→30s)
-- [ ] Header bar connection status indicator
-- [ ] Block command dispatch when disconnected (show status message)
-- [ ] Event log entries for disconnect/reconnect
-- [ ] Tests: connection state transitions, command rejection when disconnected
+- [x] Add `ConnectionStatus` enum to `AppState`
+- [x] Auto-reconnect on gRPC disconnect with exponential backoff (1s→30s)
+- [x] Header bar connection status indicator
+- [x] Block command dispatch when disconnected (show status message)
+- [x] Event log entries for disconnect/reconnect
+- [x] Tests: connection state transitions, command rejection when disconnected
 
 ### Part 2: Command UX
 
-- [ ] Command history (↑/↓ in command mode, 50 entry cap)
-- [ ] Status bar feedback with 5-second auto-clear
-- [ ] Tab-complete for slot IDs in `:move` and `:resume-slot`
-- [ ] Tests: history cycling, tab-complete matching
+- [x] Command history (↑/↓ in command mode, 50 entry cap)
+- [x] Status bar feedback with 5-second auto-clear
+- [x] Tab-complete for slot IDs in `:move` and `:resume-slot`
+- [x] Tests: history cycling, tab-complete matching
 
 ### Part 3: Help Overlay
 
-- [ ] `?` toggles keybinding reference overlay
-- [ ] Overlay renders on top of dashboard
-- [ ] Only `?` and quit keys active while help is visible
-- [ ] Test: help toggle state
+- [x] `?` toggles keybinding reference overlay
+- [x] Overlay renders on top of dashboard
+- [x] Only `?` and quit keys active while help is visible
+- [x] Test: help toggle state
 
 ### Part 4: Issue Fixes
 
-- [ ] I-019: `demo.sh` waits for DONE after MoveTask
-- [ ] I-024 (partial): Parse LoopDetected reason strings for specific labels
-- [ ] Test: reason string parsing for Loop/Stuck/Budget labels
+- [x] I-019: `demo.sh` waits for DONE after MoveTask
+- [x] I-024 (partial): Parse LoopDetected reason strings for specific labels
+- [x] Test: reason string parsing for Loop/Stuck/Budget labels
 
 ## Blocked
 
@@ -48,7 +48,12 @@
 
 ## Done This Sprint
 
-- (Sprint 7 not yet started)
+- Added TUI reconnect state with exponential backoff, stale-data rendering, disconnect/reconnect event log entries, and command blocking while disconnected
+- Added command history, slot-id tab completion, and a dedicated footer status bar with auto-clear feedback
+- Added `?` help overlay modal and key filtering while help is visible
+- Fixed `scripts/demo.sh` to wait for DONE after merge queue dispatch
+- Improved LoopDetected event labels to distinguish loop, stuck, and budget-velocity reasons
+- Verification passed: `cargo fmt --all`, `cargo check --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, `cargo build -p nexode-tui`, `cargo run -p nexode-tui -- --help`
 
 ## Done Previously (Sprint 6)
 
@@ -60,6 +65,7 @@
 
 ## Next Up
 
+- Sprint 7 review / merge
 - After Sprint 7: VS Code Extension (M3b) — requires PC architecture docs first
 
 ## Notes
