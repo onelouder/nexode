@@ -185,42 +185,128 @@
   - [ ] Embedding-based context compilation
   - [ ] Adaptive context budgeting per agent
 
-### M6: Quality Governance — Strict Score Engine ⏳
-- **Target:** TBD (post-Phase 4 — depends on Tree-sitter from M5)
-- **Status:** Feature Request
-- **Motivation:** At 15+ parallel agents (OpenClaw-scale constellation), quality drift becomes the dominant failure mode. Agents optimize for task completion, not architectural integrity. The "Strict Score" methodology (desloppify v0.9.10, Peter O'Malley) provides a deterministic, non-gameable quality metric that agents cannot bypass.
+### Quality Governance — Strict Score (decomposed across milestones)
+
+> Inspired by desloppify (Peter O'Malley). At 15+ parallel agents, quality drift
+> is the dominant failure mode. This feature decomposes into three pieces shipped
+> incrementally — not as a single monolithic milestone.
+
+#### QG-1: Generic Score Gate Hook (Backlog → Sprint 11/12) ⏳
+- **Target:** Near-term (no dependencies)
+- **Status:** Backlog
+- **Size:** ~100 LOC Rust + proto event
+- **What:** Add a `score_command` field to the `verify` config in `session.yaml`. Before merge, the daemon runs the command against the worktree diff. Non-zero exit = merge rejected.
 - **Deliverables:**
-  - [ ] **Strict Score Engine** in `nexode-daemon` (Layer 0): Scan-Plan-Resolve loop
-    - Mechanical scan: Tree-sitter linting, type safety, cyclomatic complexity bounds
-    - Subjective review: spawn "Adversarial Reviewer" agent per slot for naming/abstraction taste-tests
-    - Normalized 0-100 Strict Score per project and per agent contribution
-  - [ ] **Score Gate** in merge queue (`engine/merge.rs`): block merge if delta score < 0
-    - Pre-merge: compute score on worktree branch vs target branch
-    - Reject merge if `branch_score < main_score - threshold`
-    - Emit `ScoreGateRejected` event with diff analysis
-  - [ ] **Resolve & Attest workflow**: agents must justify changes against scoring logic
-    - New task status: `TASK_STATUS_ATTESTING` between REVIEW and MERGE_QUEUE
-    - Agent produces structured attestation (which rules tripped, why delta is justified)
-    - Operator can override via `ForceAttest` command
-  - [ ] **Proto extensions** (`hypervisor.proto`):
-    - `project_strict_score` field on `Project` message
-    - `contribution_score` field on `AgentSlot` message
-    - `ScoreGateRejected` event type in `HypervisorEvent`
-    - `StrictScoreUpdated` event type for real-time score streaming
-  - [ ] **VS Code Status Bar** (`status-bar.ts`): display `project_strict_score` next to cost
-  - [ ] **Fleet View / Synapse Grid**: per-agent `contribution_score` column in agent cards
-  - [ ] **TUI integration**: score column in slot detail pane
-- **Architecture integration map:**
-  - Layer 0 (Daemon): New `scoring/` module in `nexode-daemon`. Consumes Tree-sitter AST from Phase 4 Step 1. Runs as a fourth observer loop alongside heartbeat/budget/semantic loops.
-  - Merge queue: `engine/merge.rs` gains a `pre_merge_score_check()` gate between MERGE_QUEUE admission and actual merge execution.
-  - Proto: Extend `Project`, `AgentSlot`, `HypervisorEvent` (backward-compatible field additions).
-  - Layer 3 (VS Code): `status-bar.ts` subscribes to `StrictScoreUpdated`. Synapse Grid cards show contribution scores. Minimal new code — mostly consuming new proto fields through existing `StateCache`.
-  - TUI: `ui.rs` slot detail adds score rendering. Same proto consumption path.
-- **Dependencies:** M5 (Phase 4 Tree-sitter integration) must land first. The mechanical scan reuses the AST infrastructure. The adversarial reviewer agent requires the AgentHarness trait (Sprint 1) to spawn review sub-agents.
-- **Open questions:**
-  - Subjective reviewer model selection: use the same agent CLI as the coding agent, or a dedicated lighter model?
-  - Score threshold tuning: configurable per-project in `session.yaml` or global?
-  - Latency budget: the score computation must not block the merge queue hot path. Async scoring with cached results?
+  - [ ] `score_command` field in `VerifyConfig` (session.yaml `verify.score_command`)
+  - [ ] `pre_merge_score_check()` in `engine/merge.rs`, called between MERGE_QUEUE admission and `merge_and_verify()`
+  - [ ] `ScoreGateRejected` event type in `HypervisorEvent` proto (slot_id, exit_code, stderr)
+  - [ ] `TASK_STATUS_ATTESTING` added to `TaskStatus` enum — kanban flow becomes `REVIEW → ATTESTING → MERGE_QUEUE`
+  - [ ] `ForceAttest` operator command to override a rejected gate
+  - [ ] VS Code + TUI render the ATTESTING state (color: amber)
+- **Why this ships first:** It’s pure infrastructure. Users can plug in desloppify, clippy, eslint, `cargo test`, or any external tool today. No Tree-sitter, no LLM, no new daemon subsystem. Example config:
+  ```yaml
+  projects:
+    - id: backend
+      verify:
+        commands: ["cargo test"]
+        score_command: "desloppify scan --exit-code --min-score 60"
+  ```
+
+#### QG-2: Built-in Mechanical Scanner (M5 sub-deliverable) ⏳
+- **Target:** Ships with Phase 4 Tree-sitter work (M5)
+- **Status:** Planned (depends on M5 Step 1)
+- **Size:** ~500 LOC Rust module
+- **What:** When Tree-sitter AST indexing lands in Phase 4, add a daemon-internal scoring path that replaces the shell-out for mechanical checks. Deterministic, per-file, cacheable.
+- **Deliverables:**
+  - [ ] `scoring/mechanical.rs` module in `nexode-daemon`
+    - Cyclomatic complexity per function (Tree-sitter CFG walk)
+    - Duplication detection (AST signature hashing across files)
+    - Dead code candidates (unreferenced public symbols)
+    - Type coverage ratio (for TS/Python projects with type annotations)
+  - [ ] Per-file numeric score cached in SQLite alongside token accounting
+  - [ ] `strict_score` field on `Project` proto message (aggregate mechanical score)
+  - [ ] `StrictScoreUpdated` event emitted on score change
+  - [ ] Daemon-internal score gate path (bypass shell-out when built-in scanner is configured)
+  - [ ] VS Code Status Bar: display `strict_score` next to session cost
+  - [ ] TUI: score column in slot detail pane
+- **Why this waits for M5:** The Tree-sitter parse trees are the input. Building a parallel AST pipeline would be redundant with Phase 4 Step 1.
+
+#### QG-3: Adversarial Subjective Reviewer (spike + delivery) ⏳
+- **Target:** Post-M5 (spike: 1-2 weeks; delivery: 3-4 weeks)
+- **Status:** Feature Request (requires spike validation)
+- **Motivation:** Mechanical scanning catches complexity and duplication but misses abstraction quality, naming coherence, and architectural taste. The key insight from desloppify: treat "taste" as a measurable, scoreable signal. The key insight for Nexode: use a different model family than the coding agent so the reviewer doesn’t share the author’s blindspots.
+
+**Tiered reviewer architecture:**
+
+| Tier | Engine | Runs when | Latency | Token cost | Purpose |
+|---|---|---|---|---|---|
+| T0 | Tree-sitter (QG-2) | Every commit | <100ms | Zero | Mechanical: complexity, duplication, dead code |
+| T1 | Local LLM via llama.cpp | Every merge candidate | 3-8s/file | Zero (local) | Subjective: naming, cohesion, abstraction quality |
+| T2 | Cloud LLM (cross-family) | Escalation only | 10-30s | API tokens | Adversarial: different training data, different blindspots |
+
+**T1 — Local LLM (default subjective reviewer):**
+- **Model:** `qwen3-35b-a3b` (35B MoE, 3B active parameters) via llama.cpp
+- **Why this model:** MoE architecture means large model quality at small model inference cost. Only 3B active params per token → 40-60 tok/s on the Spark’s GPU. At 15 agents merging every 30-60 min, the Spark handles review load without contention.
+- **Integration:** New `LocalLlmHarness` implementing the `AgentHarness` trait. Connects to a llama.cpp server (already running for other local inference tasks) or spawns one. Sends a structured review prompt with the diff + surrounding AST context. Parses structured JSON response with per-file scores and findings.
+- **Prompt contract:** The reviewer receives: (1) the diff, (2) AST signatures of changed functions from QG-2, (3) a scoring rubric (naming 0-25, cohesion 0-25, abstraction 0-25, consistency 0-25). Returns JSON with scores + one-line justifications per dimension.
+
+**T2 — Cloud LLM (adversarial escalation):**
+- **Trigger:** T1 score lands in a configurable gray zone (e.g., 50-70) or operator sets `tier2_required: true` on high-stakes projects.
+- **Cross-family constraint:** If the coding agent used Claude, the reviewer uses Gemini or GPT (and vice versa). Different training data → different systematic biases → genuine adversarial signal. Configured per-project in `session.yaml`.
+- **Why cross-family matters:** Same-model review is theater. Claude reviewing Claude’s output shares biases in abstraction style, naming conventions, and error-handling patterns. Cross-family review is the only way to catch model-specific slop.
+
+**Deliverables:**
+  - [ ] **Spike (1-2 weeks):** Validate T1 scoring quality
+    - Run qwen3-35b-a3b against 20 real diffs from Sprints 1-9
+    - Compare local model scores vs human assessment
+    - Measure latency per file on the Spark
+    - Determine if score normalization is needed (local vs cloud calibration)
+    - Kill criteria: if T1 scores correlate <0.5 with human judgment, defer to T2-only
+  - [ ] **LocalLlmHarness** in `nexode-daemon`: `AgentHarness` impl for llama.cpp server
+    - HTTP API to llama.cpp `/completion` endpoint
+    - Structured prompt template with diff + AST context + rubric
+    - JSON response parsing with score extraction
+  - [ ] **Reviewer observer loop**: fourth loop alongside heartbeat/budget/semantic
+    - Triggers on `TASK_STATUS_ATTESTING` entry
+    - Runs T0 (instant) → T1 (local LLM) → conditionally T2 (cloud)
+    - Composite score = weighted(T0 mechanical, T1/T2 subjective)
+    - Emits `StrictScoreUpdated` with tier breakdown
+  - [ ] **`contribution_score`** field on `AgentSlot` proto message
+    - Rolling average of per-merge score deltas attributed to each agent
+    - VS Code Fleet View / Synapse Grid: per-agent score column
+    - TUI: score in slot detail tooltip
+  - [ ] **Resolve & Attest workflow**
+    - On gate rejection: agent receives structured feedback (which dimensions scored low, specific findings)
+    - Agent must produce a structured attestation (JSON: which rules tripped, why delta is justified)
+    - Attestation stored in WAL for audit trail
+    - Operator `ForceAttest` command bypasses with logged override
+  - [ ] **session.yaml schema:**
+    ```yaml
+    quality:
+      mechanical:
+        enabled: true
+        max_complexity: 15
+        max_duplication_ratio: 0.08
+      reviewer:
+        tier1:
+          model: "llama-local/qwen3-35b-a3b"
+          endpoint: "http://localhost:8080"  # llama.cpp server
+          timeout_seconds: 30
+        tier2:
+          model: "claude-sonnet"  # cross-family adversarial
+          trigger: "score < 70 or delta < -5"
+        cross_family: true  # enforce different model family than coding agent
+      gate:
+        enabled: true
+        min_score: 60
+        block_on_regression: true
+    ```
+- **Open questions (resolve in spike):**
+  - Quantization: Q4_K_M vs Q8_0 for qwen3-35b-a3b review quality? (Q4 is faster, Q8 may score more accurately on subjective dimensions)
+  - Score normalization: are T1 local scores directly comparable to T2 cloud scores, or do we need a calibration layer?
+  - Incremental scoring: score only changed files (fast, but misses cross-file coherence) vs re-score affected module (slower, catches ripple effects)?
+  - Attestation format: structured JSON the daemon parses for auto-retry, or free-form markdown the operator reads?
+  - llama.cpp lifecycle: daemon manages the llama.cpp process, or assume it’s externally managed?
 
 ## Backlog
 
@@ -241,7 +327,7 @@
 - [ ] Pre-merge semantic conflict detection (R-009 — AST signature comparison)
 - [ ] Harness version pinning / self-test (R-010)
 - [ ] Phase 5 / Pool requirements (see `docs/spec/deferred.md`)
-- [ ] Strict Score Engine — quality governance for agent output (M6 feature request)
-- [ ] Score Gate — pre-merge quality check in merge queue (M6 feature request)
-- [ ] Adversarial Reviewer agent — subjective code taste-tests (M6 feature request)
-- [ ] Resolve & Attest workflow — `TASK_STATUS_ATTESTING` state (M6 feature request)
+- [ ] QG-1: Generic Score Gate hook in merge queue (near-term, no dependencies)
+- [ ] QG-2: Built-in mechanical scanner using Tree-sitter (ships with M5/Phase 4)
+- [ ] QG-3: Adversarial subjective reviewer — local LLM (qwen3-35b-a3b) + cross-family cloud escalation (spike then delivery, post-M5)
+- [ ] LocalLlmHarness — `AgentHarness` impl for llama.cpp server (QG-3 dependency)
