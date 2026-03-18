@@ -109,19 +109,35 @@
   - [x] Cross-crate integration test (daemon→TUI via gRPC)
   - [x] CLI cleanup: `--version` flags, I-014 doc fix
 
-### M3a-harden: Sprint 7 — TUI Command Hardening 🔄
+### M3a-harden: Sprint 7 — TUI Command Hardening ✅
 - **Target:** 2026-04-19
-- **Status:** Ready for Codex
+- **Status:** Complete (merged 2026-03-17, PR #19, commit `a93e9af`)
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-7-codex.md`
+- **Review:** `docs/reviews/sprint-7-review.md`
 - **Deliverables:**
-  - [ ] Auto-reconnect on gRPC disconnect with backoff and status indicator
-  - [ ] Command history (↑/↓ in command mode)
-  - [ ] Status bar feedback with auto-clear
-  - [ ] Tab-complete for slot IDs
-  - [ ] Help overlay (`?` key)
-  - [ ] Fix I-019: demo.sh waits for DONE
-  - [ ] Improve I-024: parse LoopDetected reason strings
+  - [x] Auto-reconnect on gRPC disconnect with backoff and status indicator
+  - [x] Command history (↑/↓ in command mode)
+  - [x] Status bar feedback with auto-clear
+  - [x] Tab-complete for slot IDs
+  - [x] Help overlay (`?` key)
+  - [x] Fix I-019: demo.sh waits for DONE
+  - [x] Improve I-024: parse LoopDetected reason strings
+
+### M3a-cleanup: Sprint 8 — Daemon Hardening + Issue Sweep ⏳
+- **Target:** 2026-04-26
+- **Status:** Ready for Codex
+- **Agent:** gpt (Codex)
+- **Prompt:** `.agents/prompts/sprint-8-codex.md`
+- **Deliverables:**
+  - [ ] I-020: Guard `observe_output` against unknown/removed slots
+  - [ ] I-021: Configurable alert cooldown for repeated observer findings
+  - [ ] I-023: Filter URLs and source-location patterns from sandbox candidate paths
+  - [ ] I-024: Add `finding_kind` enum to `LoopDetected` proto message
+  - [ ] I-029: Update Claude harness doc with `--permission-mode` flags
+  - [ ] I-013: Reject malformed `TOKENS` lines with no valid key=value pairs
+  - [ ] Add MSRV documentation (R-006) to Cargo.toml and README
+  - [ ] Daemon integration test: TUI reconnect after daemon restart
 
 ### M3b: Phase 2 Continuation — VS Code Extension ⏳
 - **Target:** TBD

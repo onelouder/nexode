@@ -221,13 +221,13 @@
 - **Details:** The function fires on lines where `type == "result"`, `event == "done"`, or `status == "completed"`. If a CLI ever emits multiple result-type lines, each matching line with usage fields produces a `ParsedTelemetry`, and the engine's `apply_telemetry` increments cumulative totals — causing double-counting. In practice, Claude emits exactly one `type: "result"` line, so current risk is low.
 - **When:** When adding support for new CLI agents or if Claude/Codex output format changes.
 
-### I-019: `demo.sh` doesn't wait for DONE after MoveTask
+### ~~I-019: `demo.sh` doesn't wait for DONE after MoveTask~~ RESOLVED
 
 - **Source:** Sprint 2 review (2026-03-15), finding F-005
 - **Module:** `scripts/demo.sh`
 - **Severity:** Low
-- **Details:** After sending `dispatch move-task slot-a merge-queue`, the script immediately prints status and exits. The merge happens asynchronously on the daemon's tick interval (2s), so "Final status" may still show `merge_queue` instead of `done`.
-- **When:** Minor cosmetic. Consider adding a wait loop for DONE after the MoveTask dispatch.
+- **Resolved:** Sprint 7 (2026-03-17), branch `agent/gpt/sprint-7-tui-command-hardening`
+- **Resolution:** Poll loop with `grep -Eq` for done status, 15-iteration timeout with 1-second sleep.
 
 ### I-020: `observe_output` creates slot state for unknown/removed slots
 
@@ -267,7 +267,8 @@
 - **Module:** `engine.rs:1825-1833`, `hypervisor.proto`
 - **Severity:** Low
 - **Details:** `ObserverFindingKind::LoopDetected`, `Stuck`, and `BudgetVelocity` all map to the same proto variant `observer_alert::Detail::LoopDetected`. A UI client can't switch on the finding kind without parsing the `reason` string.
-- **When:** Phase 2/3 when building TUI or VS Code extension. Consider adding a `finding_kind` enum to the proto message or splitting into three variants.
+- **Partial fix:** Sprint 7 (2026-03-17) — TUI `events.rs` now parses reason strings to show `Loop Detected`, `Stuck`, and `Budget Velocity` labels. The proto-level split is still deferred.
+- **When:** Consider adding a `finding_kind` enum to the proto message when building the VS Code extension.
 
 ### ~~I-025: `Review → Paused` creates un-resumable state via `ResumeAgent`/`ResumeSlot`~~ RESOLVED
 

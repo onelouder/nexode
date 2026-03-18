@@ -1,76 +1,68 @@
-# PLAN_NOW.md — Current Short-Horizon Plan
+# PLAN_NOW — Current Sprint
 
-> What we're doing right now. Updated by the active agent during their turn.
-> This replaces ambiguous "working" files. Keep it concrete and bounded.
+> What's happening right now. Updated at each handoff.
 
 ## Current Sprint
 
-- **Goal:** Sprint 7 — TUI Command Hardening
-- **Deadline:** 2026-04-19
+- **Sprint:** 8
+- **Goal:** Sprint 8 — Daemon Hardening + Issue Sweep
+- **Deadline:** 2026-04-26
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-7-tui-command-hardening`
-- **Previous sprint:** Sprint 6 — Integration Polish (complete, merged to `main` at `3ae2ffd`)
+- **Current Branch:** `agent/gpt/sprint-8-daemon-hardening` (to be created)
+- **Previous sprint:** Sprint 7 — TUI Command Hardening (complete, merged to `main` via PR #19 at `a93e9af`)
 
 ## Tasks
 
-### Part 1: Reconnection
+### Part 1: Observer Hardening
 
-- [x] Add `ConnectionStatus` enum to `AppState`
-- [x] Auto-reconnect on gRPC disconnect with exponential backoff (1s→30s)
-- [x] Header bar connection status indicator
-- [x] Block command dispatch when disconnected (show status message)
-- [x] Event log entries for disconnect/reconnect
-- [x] Tests: connection state transitions, command rejection when disconnected
+- [ ] I-020: Guard `observe_output` against unknown/removed slots
+- [ ] I-021: Configurable alert cooldown for repeated observer findings
+- [ ] I-023: Filter URLs and source-location patterns from sandbox `candidate_paths`
+- [ ] Tests: slot-exists guard, alert cooldown behavior, URL/source-loc filtering
 
-### Part 2: Command UX
+### Part 2: Proto Cleanup
 
-- [x] Command history (↑/↓ in command mode, 50 entry cap)
-- [x] Status bar feedback with 5-second auto-clear
-- [x] Tab-complete for slot IDs in `:move` and `:resume-slot`
-- [x] Tests: history cycling, tab-complete matching
+- [ ] I-024: Add `finding_kind` enum to `LoopDetected` proto message
+- [ ] Update daemon `observer_tick.rs` to emit the new enum field
+- [ ] Update TUI `events.rs` to use proto enum instead of string parsing
+- [ ] Tests: proto field round-trip, TUI event formatting with new field
 
-### Part 3: Help Overlay
+### Part 3: Harness & Telemetry Fixes
 
-- [x] `?` toggles keybinding reference overlay
-- [x] Overlay renders on top of dashboard
-- [x] Only `?` and quit keys active while help is visible
-- [x] Test: help toggle state
+- [ ] I-013: Reject empty `ParsedTelemetry` from malformed `TOKENS` lines
+- [ ] I-029: Update Claude harness doc with `--permission-mode` flags
+- [ ] Tests: malformed TOKENS line rejection
 
-### Part 4: Issue Fixes
+### Part 4: Infrastructure
 
-- [x] I-019: `demo.sh` waits for DONE after MoveTask
-- [x] I-024 (partial): Parse LoopDetected reason strings for specific labels
-- [x] Test: reason string parsing for Loop/Stuck/Budget labels
+- [ ] R-006: Add `rust-version` MSRV to all Cargo.toml files
+- [ ] R-006: Document MSRV in README.md
+- [ ] Integration test: daemon restart → TUI reconnect verification
 
 ## Blocked
 
-- None
+- (none)
 
 ## Done This Sprint
 
-- Added TUI reconnect state with exponential backoff, stale-data rendering, disconnect/reconnect event log entries, and command blocking while disconnected
-- Added command history, slot-id tab completion, and a dedicated footer status bar with auto-clear feedback
-- Added `?` help overlay modal and key filtering while help is visible
+- (Sprint 8 not yet started)
+
+## Done Previously (Sprint 7)
+
+- Added TUI reconnect with exponential backoff, stale-data rendering, disconnect/reconnect event log entries, command blocking while disconnected
+- Added command history, slot-id tab completion, status bar feedback with auto-clear
+- Added `?` help overlay modal and key filtering
 - Fixed `scripts/demo.sh` to wait for DONE after merge queue dispatch
 - Improved LoopDetected event labels to distinguish loop, stuck, and budget-velocity reasons
-- Verification passed: `cargo fmt --all`, `cargo check --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, `cargo build -p nexode-tui`, `cargo run -p nexode-tui -- --help`
-
-## Done Previously (Sprint 6)
-
-- Fixed TUI event-gap replay and startup timezone capture
-- Fixed Review resume behavior and immediate merge queue draining
-- Added cross-crate daemon→TUI gRPC integration coverage
-- Added TUI `--version` and corrected harness CLI architecture docs
-- 97 tests total (70 daemon + 4 ctl + 23 TUI)
+- 108 tests pass
 
 ## Next Up
 
-- Sprint 7 review / merge
-- After Sprint 7: VS Code Extension (M3b) — requires PC architecture docs first
+- Sprint 8 review / merge
+- After Sprint 8: VS Code Extension (M3b) — requires PC architecture docs first
 
 ## Notes
 
-- Sprint 7 prompt: `.agents/prompts/sprint-7-codex.md`
-- This is a **TUI-only sprint** — do NOT modify daemon, proto, or ctl crates
-- Only non-TUI change: `scripts/demo.sh` (I-019)
-- Do not modify: `AGENTS.md`, `DECISIONS.md`, `docs/spec/*`, `docs/architecture/*`
+- Sprint 8 is daemon-focused. TUI is production-ready and should only change for I-024 proto integration.
+- The proto change (I-024) is the riskiest item — it modifies the wire format. Backward compatibility: new enum field defaults to 0 (unspecified), so older TUI versions still work.
+- Alert cooldown (I-021) needs a new config field in `observer` settings. Use `alert_cooldown_seconds: u64` with a default of 300 (5 minutes).
