@@ -1,0 +1,88 @@
+{
+  "name": "nexode-vscode",
+  "displayName": "Nexode",
+  "publisher": "nexode",
+  "description": "VS Code integration for the Nexode daemon.",
+  "version": "0.0.1",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:nexode.pauseSlot",
+    "onCommand:nexode.resumeSlot",
+    "onCommand:nexode.moveTask",
+    "onView:nexodeSlots"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nexode",
+          "title": "Nexode",
+          "icon": "resources/nexode-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "nexode": [
+        {
+          "id": "nexodeSlots",
+          "name": "Slots"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "nexode.pauseSlot",
+        "title": "Nexode: Pause Slot"
+      },
+      {
+        "command": "nexode.resumeSlot",
+        "title": "Nexode: Resume Slot"
+      },
+      {
+        "command": "nexode.moveTask",
+        "title": "Nexode: Move Task"
+      }
+    ],
+    "configuration": {
+      "title": "Nexode",
+      "properties": {
+        "nexode.daemonHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Hostname or IP address for the Nexode daemon gRPC listener."
+        },
+        "nexode.daemonPort": {
+          "type": "number",
+          "default": 50051,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "TCP port for the Nexode daemon gRPC listener."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node ./esbuild.mjs",
+    "watch": "node ./esbuild.mjs --watch",
+    "check-types": "tsc --noEmit",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.0",
+    "@grpc/proto-loader": "^0.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}

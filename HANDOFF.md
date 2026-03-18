@@ -1,110 +1,75 @@
 ---
-agent: pc
+agent: gpt
 status: handoff
-from: pc
-timestamp: 2026-03-17T22:30:00-07:00
+from: gpt
+timestamp: 2026-03-18T10:10:00-07:00
 task: "Sprint 9 — VS Code Extension Scaffold"
-branch: "main"
-next: gpt
+branch: "agent/gpt/sprint-9-vscode-scaffold"
+next: pc
 ---
 
-# Handoff: Sprint 9 Ready for Codex
+# Handoff: Sprint 9 Extension Scaffold Complete
 
-## What Just Happened
+## What Was Done
 
-Sprint 8 (Daemon Hardening + Issue Sweep) was reviewed and merged to `main` via PR #20 (squash merge at `eab7705`). All exit criteria met, 114 tests pass, no regressions. Six issues closed (I-013, I-020, I-021, I-023, I-024, I-029). R-006 MSRV addressed. No new issues above Info severity.
+- Added a new `extensions/nexode-vscode/` top-level extension package outside the Rust workspace with `package.json`, `tsconfig.json`, `esbuild.mjs`, `.vscodeignore`, local `.gitignore`, a copied `proto/hypervisor.proto`, and a placeholder activity-bar icon
+- Implemented `src/daemon-client.ts` using `@grpc/grpc-js` + `@grpc/proto-loader`
+  - `GetFullState`, `SubscribeEvents`, and `DispatchCommand`
+  - connection-state events
+  - exponential-backoff reconnect from 2s to a 30s cap
+  - endpoint reconfiguration from VS Code settings
+- Implemented `src/state.ts` as a local snapshot/event mirror aligned to the TUI `apply_snapshot` / `apply_event` pattern
+- Implemented `src/slot-tree-provider.ts`
+  - project → slot hierarchy
+  - D-009-style status color mapping via `ThemeIcon`
+  - slot descriptions with status, agent id, and token totals
+  - debounced refresh
+- Implemented `src/commands.ts`
+  - `Nexode: Pause Slot`
+  - `Nexode: Resume Slot`
+  - `Nexode: Move Task`
+  - quick-pick selectors and command-response feedback
+- Implemented `src/status-bar.ts`
+  - connected / reconnecting / disconnected footer indicator
+  - aggregate agent count and token totals
+  - click-through to the Nexode activity bar
 
-Sprint 8 delivered:
-- Observer hardening: unknown-slot guard, cooldown-based re-alerting, path candidate filtering
-- Proto `FindingKind` enum with daemon→TUI round-trip
-- Empty telemetry rejection for malformed `TOKENS` lines
-- Claude harness doc update (`-p`, `--permission-mode bypassPermissions`)
-- `rust-version = "1.85"` in all Cargo.toml + README
-- Daemon restart → TUI reconnect integration test
+## Verification
 
-Sprint 8 review: `docs/reviews/sprint-8-review.md`
+- `cd extensions/nexode-vscode && npm install`
+- `cd extensions/nexode-vscode && npm run build`
+- `cd extensions/nexode-vscode && npm run check-types`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `code --version` confirms only Cursor CLI is installed locally
+- `code --extensionDevelopmentPath ...` is not supported by Cursor CLI, so live extension-host activation was not runnable here
 
-## Sprint 9 Scope
+## Outputs
 
-Sprint 9 begins the VS Code Extension milestone (M3b). This is the first sprint that introduces a TypeScript/Node.js component. The goal is to scaffold the extension, establish the gRPC connection to the daemon, and render a minimal slot status panel.
-
-### Part 1: Extension Scaffold
-
-- Create `crates/nexode-vscode/` (or `extensions/nexode-vscode/`) directory
-- Initialize with `yo code` or manual `package.json` + `tsconfig.json`
-- Add VS Code extension manifest (`contributes.viewsContainers`, `views`)
-- Add build system (esbuild or webpack for bundling)
-- Extension activates on `nexode.*` commands
-
-### Part 2: gRPC Client
-
-- TypeScript gRPC client connecting to daemon at `localhost:{port}`
-- Implement `GetFullState` call to fetch initial snapshot
-- Implement `SubscribeEvents` streaming for real-time updates
-- Connection status tracking (connected/disconnected/reconnecting)
-- R-008 mitigation: consider WebSocket bridge if Extension Host IPC is a concern
-
-### Part 3: Slot Status Webview
-
-- TreeView or WebviewPanel showing project → slots hierarchy
-- Display slot ID, task status, agent ID, token count
-- Live updates from event stream
-- Color-coded status badges matching D-009 kanban spec
-
-### Part 4: Basic Command Dispatch
-
-- Command palette entries: `Nexode: Pause Slot`, `Nexode: Resume Slot`, `Nexode: Move Task`
-- Quick-pick for slot selection
-- `DispatchCommand` gRPC call with `CommandResponse` feedback
-
-## Sprint 9 Prompt
-
-`.agents/prompts/sprint-9-codex.md`
-
-## Read First
-
-- `AGENTS.md`
-- `.agents/openai.md`
-- `HANDOFF.md` (this file)
+- `extensions/nexode-vscode/package.json`
+- `extensions/nexode-vscode/package-lock.json`
+- `extensions/nexode-vscode/tsconfig.json`
+- `extensions/nexode-vscode/esbuild.mjs`
+- `extensions/nexode-vscode/.vscodeignore`
+- `extensions/nexode-vscode/.gitignore`
+- `extensions/nexode-vscode/proto/hypervisor.proto`
+- `extensions/nexode-vscode/resources/nexode-icon.svg`
+- `extensions/nexode-vscode/src/extension.ts`
+- `extensions/nexode-vscode/src/daemon-client.ts`
+- `extensions/nexode-vscode/src/state.ts`
+- `extensions/nexode-vscode/src/slot-tree-provider.ts`
+- `extensions/nexode-vscode/src/commands.ts`
+- `extensions/nexode-vscode/src/status-bar.ts`
 - `PLAN_NOW.md`
-- `ROADMAP.md` — M3b milestone
-- `docs/spec/master-spec.md` — Phase 2 requirements
-- `crates/nexode-proto/proto/hypervisor.proto` — gRPC service definition
+- `CHANGELOG.md`
+- `HANDOFF.md`
 
-## Context for Codex
+## Next Agent
 
-### Daemon gRPC Service
+Recommended next step: `pc` review Sprint 9 and merge if approved.
 
-The daemon exposes a gRPC service at `hypervisor.proto`:
-- `SubscribeEvents(SubscribeRequest) → stream HypervisorEvent` — real-time event stream
-- `DispatchCommand(OperatorCommand) → CommandResponse` — operator commands
-- `GetFullState(StateRequest) → FullStateSnapshot` — full state snapshot
+Residual risk to review:
 
-The proto file at `crates/nexode-proto/proto/hypervisor.proto` is the source of truth. The TypeScript client should generate types from this proto file.
-
-### Existing Clients
-
-- `nexode-ctl` (Rust CLI) — `crates/nexode-ctl/src/main.rs`
-- `nexode-tui` (Rust TUI) — `crates/nexode-tui/src/`
-
-Both are useful references for how to consume the daemon API.
-
-### Key Constraint
-
-This sprint focuses on the VS Code extension. Do NOT modify daemon, TUI, or proto code. The proto is stable. If the extension needs proto changes, flag them as deferred issues.
-
-### Test Baseline
-
-- Daemon: 73 lib + 3 bin = 76 tests
-- Ctl: 4 tests
-- TUI: 28 lib + 6 bin = 34 tests
-- Total: 114 tests
-
-### Remaining Open Issues
-
-All Low severity, not blocking Sprint 9:
-- I-004: `provider_config` shallow merge
-- I-005: SQLite schema migration versioning
-- I-011: Recovery re-enqueues merge slot without worktree check
-- I-012: Token/byte conflation in `truncate_payload`
-- I-018: `parse_json_summary_telemetry` double-count risk
+- Manual smoke remains: open the extension in a real VS Code extension host, connect to a live daemon, and confirm snapshot/event flow plus command dispatch
+- Cursor CLI in this environment cannot launch an extension-development host (`--extensionDevelopmentPath` unsupported)
+- The extension currently uses runtime proto loading plus handwritten normalization instead of generated static TypeScript stubs

@@ -1,0 +1,285 @@
+syntax = "proto3";
+
+package nexode.hypervisor.v2;
+
+service Hypervisor {
+  rpc SubscribeEvents(SubscribeRequest) returns (stream HypervisorEvent);
+  rpc DispatchCommand(OperatorCommand) returns (CommandResponse);
+  rpc GetFullState(StateRequest) returns (FullStateSnapshot);
+}
+
+enum AgentState {
+  AGENT_STATE_UNSPECIFIED = 0;
+  AGENT_STATE_INIT = 1;
+  AGENT_STATE_IDLE = 2;
+  AGENT_STATE_PLANNING = 3;
+  AGENT_STATE_EXECUTING = 4;
+  AGENT_STATE_REVIEW = 5;
+  AGENT_STATE_BLOCKED = 6;
+  AGENT_STATE_TERMINATED = 7;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_WORKING = 2;
+  TASK_STATUS_REVIEW = 3;
+  TASK_STATUS_MERGE_QUEUE = 4;
+  TASK_STATUS_RESOLVING = 5;
+  TASK_STATUS_DONE = 6;
+  TASK_STATUS_PAUSED = 7;
+  TASK_STATUS_ARCHIVED = 8;
+}
+
+enum AgentMode {
+  AGENT_MODE_UNSPECIFIED = 0;
+  AGENT_MODE_NORMAL = 1;
+  AGENT_MODE_PLAN = 2;
+  AGENT_MODE_FULL_AUTO = 3;
+}
+
+message Project {
+  string id = 1;
+  string display_name = 2;
+  string repo_path = 3;
+  string color = 4;
+  repeated string tags = 5;
+  double budget_max_usd = 6;
+  double budget_warn_usd = 7;
+  double current_cost_usd = 8;
+  repeated AgentSlot slots = 9;
+}
+
+message AgentSlot {
+  string id = 1;
+  string project_id = 2;
+  string task = 3;
+  AgentMode mode = 4;
+  string branch = 5;
+  string current_agent_id = 6;
+  string worktree_id = 7;
+  uint64 total_tokens = 8;
+  double total_cost_usd = 9;
+}
+
+message Agent {
+  string id = 1;
+  string display_name = 2;
+  string current_role = 3;
+  AgentState state = 4;
+  AgentMode mode = 5;
+  string slot_id = 6;
+  string worktree_id = 7;
+  uint64 tokens_consumed = 8;
+  double estimated_cost = 9;
+  double tokens_per_sec = 10;
+}
+
+message TaskNode {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  TaskStatus status = 4;
+  string assigned_agent_id = 5;
+  string project_id = 6;
+  repeated string dependency_ids = 7;
+}
+
+message Worktree {
+  string id = 1;
+  string absolute_path = 2;
+  string branch_name = 3;
+  double conflict_risk = 4;
+}
+
+message SubscribeRequest {
+  string client_version = 1;
+}
+
+message StateRequest {}
+
+message FullStateSnapshot {
+  repeated Project projects = 1;
+  repeated TaskNode task_dag = 2;
+  double total_session_cost = 3;
+  double session_budget_max_usd = 4;
+  uint64 last_event_sequence = 5;
+}
+
+message HypervisorEvent {
+  string event_id = 1;
+  uint64 timestamp_ms = 2;
+  string barrier_id = 3;
+  uint64 event_sequence = 11;
+
+  oneof payload {
+    AgentStateChanged agent_state_changed = 4;
+    AgentTelemetryUpdated agent_telemetry_updated = 5;
+    TaskStatusChanged task_status_changed = 6;
+    UncertaintyFlagTriggered uncertainty_flag = 7;
+    WorktreeStatusChanged worktree_status_changed = 8;
+    ProjectBudgetAlert project_budget_alert = 9;
+    SlotAgentSwapped slot_agent_swapped = 10;
+    ObserverAlert observer_alert = 12;
+  }
+}
+
+message AgentStateChanged {
+  string agent_id = 1;
+  AgentState new_state = 2;
+  string slot_id = 3;
+}
+
+message AgentTelemetryUpdated {
+  string agent_id = 1;
+  uint64 incr_tokens = 2;
+  double tps = 3;
+}
+
+message TaskStatusChanged {
+  string task_id = 1;
+  TaskStatus new_status = 2;
+  string agent_id = 3;
+}
+
+message UncertaintyFlagTriggered {
+  string agent_id = 1;
+  string task_id = 2;
+  string reason = 3;
+}
+
+message WorktreeStatusChanged {
+  string worktree_id = 1;
+  double new_risk = 2;
+}
+
+message ProjectBudgetAlert {
+  string project_id = 1;
+  double current_usd = 2;
+  double limit_usd = 3;
+  bool hard_kill = 4;
+}
+
+message SlotAgentSwapped {
+  string slot_id = 1;
+  string old_agent_id = 2;
+  string new_agent_id = 3;
+  string reason = 4;
+}
+
+enum ObserverIntervention {
+  OBSERVER_INTERVENTION_UNSPECIFIED = 0;
+  OBSERVER_INTERVENTION_ALERT = 1;
+  OBSERVER_INTERVENTION_KILL = 2;
+  OBSERVER_INTERVENTION_PAUSE = 3;
+}
+
+enum FindingKind {
+  FINDING_KIND_UNSPECIFIED = 0;
+  FINDING_KIND_LOOP_DETECTED = 1;
+  FINDING_KIND_STUCK = 2;
+  FINDING_KIND_BUDGET_VELOCITY = 3;
+}
+
+message ObserverAlert {
+  string slot_id = 1;
+  string agent_id = 2;
+
+  oneof detail {
+    LoopDetected loop_detected = 3;
+    SandboxViolation sandbox_violation = 4;
+    UncertaintySignal uncertainty_signal = 5;
+  }
+}
+
+message LoopDetected {
+  string reason = 1;
+  ObserverIntervention intervention = 2;
+  FindingKind finding_kind = 3;
+}
+
+message SandboxViolation {
+  string path = 1;
+  string reason = 2;
+}
+
+message UncertaintySignal {
+  string reason = 1;
+}
+
+message OperatorCommand {
+  string command_id = 1;
+
+  oneof action {
+    PauseAgent pause_agent = 2;
+    ResumeAgent resume_agent = 3;
+    KillAgent kill_agent = 4;
+    MoveTask move_task = 5;
+    AssignTask assign_task = 6;
+    SetAgentMode set_agent_mode = 7;
+    ChatDispatch chat_dispatch = 8;
+    KillProject kill_project = 9;
+    SlotDispatch slot_dispatch = 10;
+    ResumeSlot resume_slot = 11;
+  }
+}
+
+message PauseAgent {
+  string agent_id = 1;
+}
+
+message ResumeAgent {
+  string agent_id = 1;
+}
+
+message KillAgent {
+  string agent_id = 1;
+}
+
+message MoveTask {
+  string task_id = 1;
+  TaskStatus target = 2;
+}
+
+message AssignTask {
+  string task_id = 1;
+  string agent_id = 2;
+}
+
+message SetAgentMode {
+  string agent_id = 1;
+  AgentMode new_mode = 2;
+}
+
+message ChatDispatch {
+  string raw_nl = 1;
+}
+
+message KillProject {
+  string project_id = 1;
+}
+
+message SlotDispatch {
+  string slot_id = 1;
+  string raw_nl = 2;
+}
+
+message ResumeSlot {
+  string slot_id = 1;
+  string instruction = 2;
+}
+
+message CommandResponse {
+  bool success = 1;
+  string error_message = 2;
+  string command_id = 3;
+  CommandOutcome outcome = 4;
+}
+
+enum CommandOutcome {
+  COMMAND_OUTCOME_UNSPECIFIED = 0;
+  COMMAND_OUTCOME_EXECUTED = 1;
+  COMMAND_OUTCOME_REJECTED = 2;
+  COMMAND_OUTCOME_SLOT_NOT_FOUND = 3;
+  COMMAND_OUTCOME_INVALID_TRANSITION = 4;
+}
