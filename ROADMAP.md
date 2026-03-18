@@ -140,13 +140,31 @@
   - [x] Add MSRV documentation (R-006) to Cargo.toml and README
   - [x] Daemon integration test: TUI reconnect after daemon restart
 
-### M3b: Phase 2 Continuation — VS Code Extension ⏳
+### M3b: Sprint 9 — VS Code Extension Scaffold ✅
+- **Target:** 2026-05-03
+- **Status:** Complete (merged 2026-03-18, PR #21, commit `0c8cee4`)
+- **Agent:** gpt (Codex)
+- **Prompt:** `.agents/prompts/sprint-9-codex.md`
+- **Review:** `docs/reviews/sprint-9-review.md`
+- **Deliverables:**
+  - [x] Extension scaffold: `extensions/nexode-vscode/` TypeScript project
+  - [x] gRPC daemon client with exponential-backoff reconnect
+  - [x] Local state cache with snapshot + event-driven updates (EventBus pattern)
+  - [x] TreeView slot browser (project → slot hierarchy, color-coded status icons)
+  - [x] Status Bar HUD (connection state, agent count, token count, session cost)
+  - [x] Command palette: pause/resume/move via QuickPick selectors
+  - [x] Configuration settings: daemonHost, daemonPort with live reload
+  - [x] Build tooling: esbuild bundler, TypeScript strict mode, runtime proto loading
+
+### M3b-next: Sprint 10 — React Webviews + Extension Tests ⏳
 - **Target:** TBD
 - **Status:** Not Started
 - **Deliverables:**
-  - [ ] VS Code extension with embedded webview panel
-  - [ ] Real-time slot status visualization via gRPC/WebSocket
-  - [ ] Interactive command dispatch from extension
+  - [ ] Synapse Grid WebviewPanel (React, agent cards, project groups)
+  - [ ] Macro Kanban WebviewPanel (React, DAG drag-and-drop)
+  - [ ] Extension host tests (Mocha + @vscode/test-electron)
+  - [ ] Unit tests for state.ts normalization layer
+  - [ ] Observer alert display in TreeView/notifications
   - [ ] R-008 mitigation: bypass Extension Host for agent data streams
 
 ### M4: Phase 3 — Multi-Project Orchestration ⏳

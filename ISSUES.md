@@ -336,6 +336,16 @@
 - **Mitigation:** Sprint 3 Observer agent is the primary mitigation — it should monitor for loop states, uncertainty routing, and coherence drift. Longer term, consider a pre-merge semantic check that compares AST signatures across active worktrees before allowing a merge to proceed. Task decomposition that assigns agents to disjoint code regions is the most effective prevention.
 - **When:** Now — this is a live risk as soon as multiple agents work on related code. Observer agent (Sprint 3) partially addresses it.
 
+### R-011: VS Code extension has no test coverage
+
+- **Source:** Sprint 9 review (2026-03-18), architecture assessment
+- **Module:** `extensions/nexode-vscode/`
+- **Likelihood:** High
+- **Impact:** Medium (regressions in activation, TreeView rendering, command dispatch)
+- **Details:** The VS Code extension has zero test coverage — no extension host tests, no unit tests for the normalization layer (`state.ts`). The agent correctly noted that Cursor CLI cannot run `vsce test`. The normalization functions (`normalizeSnapshot`, `normalizeEvent`) are pure and could be unit-tested without the extension host via a separate test runner, but this was not done in the scaffold sprint.
+- **Mitigation:** Sprint 10 should add: (1) Mocha + `@vscode/test-electron` for extension host integration tests, (2) standalone unit tests for `state.ts` normalization functions (these are pure functions, no VS Code dependency). The normalization layer is the most critical — any field mapping bug would silently drop state updates.
+- **When:** Sprint 10.
+
 ### R-010: Agent CLI output format instability (harness fragility)
 
 - **Source:** Codex verify experience (2026-03-15) + Gemini analysis Section 9

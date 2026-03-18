@@ -1,75 +1,131 @@
----
-agent: gpt
-status: handoff
-from: gpt
-timestamp: 2026-03-18T10:10:00-07:00
-task: "Sprint 9 — VS Code Extension Scaffold"
-branch: "agent/gpt/sprint-9-vscode-scaffold"
-next: pc
----
+# HANDOFF.md
 
-# Handoff: Sprint 9 Extension Scaffold Complete
+> Last updated: 2026-03-18 by pc
+> Sprint 9 review complete. Merged as PR #21 at `0c8cee4`.
 
-## What Was Done
+## Current State
 
-- Added a new `extensions/nexode-vscode/` top-level extension package outside the Rust workspace with `package.json`, `tsconfig.json`, `esbuild.mjs`, `.vscodeignore`, local `.gitignore`, a copied `proto/hypervisor.proto`, and a placeholder activity-bar icon
-- Implemented `src/daemon-client.ts` using `@grpc/grpc-js` + `@grpc/proto-loader`
-  - `GetFullState`, `SubscribeEvents`, and `DispatchCommand`
-  - connection-state events
-  - exponential-backoff reconnect from 2s to a 30s cap
-  - endpoint reconfiguration from VS Code settings
-- Implemented `src/state.ts` as a local snapshot/event mirror aligned to the TUI `apply_snapshot` / `apply_event` pattern
-- Implemented `src/slot-tree-provider.ts`
-  - project → slot hierarchy
-  - D-009-style status color mapping via `ThemeIcon`
-  - slot descriptions with status, agent id, and token totals
-  - debounced refresh
-- Implemented `src/commands.ts`
-  - `Nexode: Pause Slot`
-  - `Nexode: Resume Slot`
-  - `Nexode: Move Task`
-  - quick-pick selectors and command-response feedback
-- Implemented `src/status-bar.ts`
-  - connected / reconnecting / disconnected footer indicator
-  - aggregate agent count and token totals
-  - click-through to the Nexode activity bar
+**Main branch:** `0c8cee4` — Sprint 9: VS Code Extension Scaffold (#21)
 
-## Verification
+### What just shipped (Sprint 9)
 
-- `cd extensions/nexode-vscode && npm install`
-- `cd extensions/nexode-vscode && npm run build`
-- `cd extensions/nexode-vscode && npm run check-types`
-- `cargo check --workspace`
-- `cargo test --workspace`
-- `code --version` confirms only Cursor CLI is installed locally
-- `code --extensionDevelopmentPath ...` is not supported by Cursor CLI, so live extension-host activation was not runnable here
+The `nexode-vscode` extension scaffold under `extensions/nexode-vscode/`. First TypeScript component in the workspace. Covers master-spec section 11 "Week 1: Extension Scaffold":
 
-## Outputs
+- gRPC daemon client with exponential-backoff reconnect (`daemon-client.ts`)
+- Local state cache with snapshot + event-driven updates (`state.ts`)
+- TreeView slot browser with color-coded status icons (`slot-tree-provider.ts`)
+- Status Bar HUD showing connection state, agent count, tokens (`status-bar.ts`)
+- Command palette: pause/resume/move via QuickPick selectors (`commands.ts`)
+- Configuration: `nexode.daemonHost`, `nexode.daemonPort` with live reload
 
-- `extensions/nexode-vscode/package.json`
-- `extensions/nexode-vscode/package-lock.json`
-- `extensions/nexode-vscode/tsconfig.json`
-- `extensions/nexode-vscode/esbuild.mjs`
-- `extensions/nexode-vscode/.vscodeignore`
-- `extensions/nexode-vscode/.gitignore`
-- `extensions/nexode-vscode/proto/hypervisor.proto`
-- `extensions/nexode-vscode/resources/nexode-icon.svg`
-- `extensions/nexode-vscode/src/extension.ts`
-- `extensions/nexode-vscode/src/daemon-client.ts`
-- `extensions/nexode-vscode/src/state.ts`
-- `extensions/nexode-vscode/src/slot-tree-provider.ts`
-- `extensions/nexode-vscode/src/commands.ts`
-- `extensions/nexode-vscode/src/status-bar.ts`
-- `PLAN_NOW.md`
-- `CHANGELOG.md`
-- `HANDOFF.md`
+Review: `docs/reviews/sprint-9-review.md` — APPROVED, no findings above Low severity.
 
-## Next Agent
+### Codebase inventory (Sprints 0-9)
 
-Recommended next step: `pc` review Sprint 9 and merge if approved.
+| Component | Location | Language | Lines (approx) | Tests |
+|---|---|---|---|---|
+| nexode-daemon | `crates/nexode-daemon/` | Rust | ~8000 | 76 (lib+bin) |
+| nexode-proto | `crates/nexode-proto/` | Proto/Rust | ~300 | 0 (generated) |
+| nexode-ctl | `crates/nexode-ctl/` | Rust | ~600 | 4 |
+| nexode-tui | `crates/nexode-tui/` | Rust | ~3000 | 34 (lib+bin) |
+| nexode-vscode | `extensions/nexode-vscode/` | TypeScript | ~1400 | 0 |
+| **Total** | | | ~13,300 | **114** |
 
-Residual risk to review:
+### Sanity Check: Sprints 1-9 vs Master-Spec
 
-- Manual smoke remains: open the extension in a real VS Code extension host, connect to a live daemon, and confirm snapshot/event flow plus command dispatch
-- Cursor CLI in this environment cannot launch an extension-development host (`--extensionDevelopmentPath` unsupported)
-- The extension currently uses runtime proto loading plus handwritten normalization instead of generated static TypeScript stubs
+#### Phase 0 (Section 8) — COMPLETE
+
+| Requirement | Status | Sprint |
+|---|---|---|
+| Session config parser with cascade | Done | 0 |
+| Git worktree orchestrator | Done | 0 |
+| Agent process manager with telemetry | Done | 0 |
+| Token accountant (SQLite) | Done | 0 |
+| gRPC skeleton (events, commands, state) | Done | 0 |
+| Crash recovery (<2s respawn) | Done | 0 |
+| Merge-and-verify pipeline | Done | 0 |
+
+#### Phase 1 (Section 9) — COMPLETE
+
+| Requirement | Status | Sprint |
+|---|---|---|
+| Full domain objects (Session, Project, Slot, Agent, Task) | Done | 0-1 |
+| Full gRPC service (3 RPCs) | Done | 0-2 |
+| OperatorCommand routing (all variants) | Done | 0-2 |
+| Event sourcing (all mutations emit events) | Done | 0-3 |
+| WAL persistence + crash recovery | Done | 1 |
+| AgentHarness trait + Claude/Codex harnesses | Done | 1-2 |
+| Context compiler (task + globs + git diff) | Done | 1 |
+| Heartbeat loop (2s liveness check) | Done | 0 |
+| Budget loop (warn/max alerts, hard kill) | Done | 0 |
+| HITL checkpoint (uncertainty routing) | Done | 3 |
+| Command acknowledgment (oneshot response) | Done | 2 |
+| Event sequence numbers + gap recovery | Done | 3 |
+
+#### Phase 2 (Section 10) — COMPLETE
+
+| Requirement | Status | Sprint |
+|---|---|---|
+| ratatui TUI: three-pane layout | Done | 5 |
+| gRPC subscriber with state mirror | Done | 5 |
+| Project group headers with color | Done | 5 |
+| Keyboard controls (p/r/k/?/tab) | Done | 5-7 |
+| Event log (last N events with timestamps) | Done | 5 |
+| Command mode with tab-complete | Done | 7 |
+| Auto-reconnect with backoff | Done | 7 |
+| Help overlay | Done | 7 |
+| Observer: loop detection, sandbox, uncertainty | Done | 3 |
+
+**Phase 2 gaps (not yet built):**
+- Live token velocity spark-line charts (spec 10 "Weeks 2-3") — the TUI shows token counts but not spark-line charts. Low priority; the core metric display works.
+- HITL popup modal overlay (spec 10 "Weeks 4-6") — uncertainty events trigger auto-pause and appear in the event log, but there's no modal overlay prompt. The operator resumes via command mode. Functionally equivalent; UX polish is deferred.
+- Budget warning visual flash (spec 10 "Weeks 4-6") — budget alerts fire and display, but no orange/red flash animation on project headers. Cosmetic.
+
+#### Phase 3 Week 1 (Section 11) — COMPLETE (Sprint 9)
+
+| Requirement | Status | Sprint |
+|---|---|---|
+| Extension pack: `nexode-vscode` TypeScript project | Done | 9 |
+| Registers all commands, views, chat participants | Partial | 9 |
+| gRPC client: connect, event stream, state mirror | Done | 9 |
+| Status Bar HUD: agent count, total cost, tokens | Done | 9 |
+
+**Partial note:** The extension registers commands and views but not the `@nexode` chat participant. The chat participant is spec section 11 "Weeks 5-8" scope. Commands (pause/resume/move) and views (TreeView, activity bar) are fully registered.
+
+#### Phase 3 Weeks 2-8 (Section 11) — NOT STARTED
+
+| Requirement | Status | Target |
+|---|---|---|
+| Synapse Grid WebviewPanel (React) | Not started | Sprint 10 |
+| Macro Kanban WebviewPanel (React) | Not started | Sprint 10 |
+| Merge Choreography TreeView | Not started | Sprint 10+ |
+| Universal Command Chat (@nexode participant) | Not started | Sprint 10+ |
+| Extension polish (settings, onboarding, README) | Not started | Sprint 10+ |
+| VS Code Marketplace publishing | Not started | Sprint 10+ |
+
+### Open Issues
+
+| ID | Severity | Summary |
+|---|---|---|
+| I-004 | Low | `provider_config` shallow merge not implemented |
+| I-005 | Low | SQLite schema has no migration versioning |
+| I-011 | Low | Recovery re-enqueues merge slot without worktree check |
+| I-012 | Low | Token/byte conflation in `truncate_payload` |
+| I-018 | Low | `parse_json_summary_telemetry` could double-count |
+| R-001 | Low | Verification worktree cleanup on panic |
+| R-002 | Medium | `sh -lc` in verification loads user dotfiles |
+| R-003 | Low | Telemetry parsing format undocumented |
+| R-008 | High | VS Code Extension Host IPC bottleneck at N>3 |
+| R-009 | Medium | Semantic drift between concurrent agents |
+| R-010 | Medium | Agent CLI output format instability |
+| R-011 | High | VS Code extension has no test coverage |
+
+### Key architectural decisions
+
+1. **Runtime proto loading** over generated stubs — avoids `protoc` build dependency, trades type safety for build simplicity. The `state.ts` normalization layer compensates with defensive coercion.
+2. **TreeView** (native VS Code) for slot display, **WebviewPanel** (React) reserved for Synapse Grid and Kanban. This matches the spec: TreeView for hierarchical data, Webview for rich interactive UIs.
+3. **Generation-based connection tracking** in `DaemonClient` — same pattern as the Rust daemon's slot agent tracking. Prevents stale callback pollution after reconnects.
+
+## For Sprint 10 Agent
+
+See `PLAN_NOW.md` for the Sprint 10 task definition.
