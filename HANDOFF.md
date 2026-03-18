@@ -1,7 +1,35 @@
+---
+agent: gpt
+claimed: 2026-03-18T01:01:47-07:00
+status: handoff
+from: gpt
+task: "Sprint 10 — React Webviews + Extension Tests"
+branch: "agent/gpt/sprint-10-react-webviews"
+next: gpt
+---
+
 # HANDOFF.md
 
-> Last updated: 2026-03-18 by pc
+> Last updated: 2026-03-18 by gpt
 > Sprint 9 review complete. Merged as PR #21 at `0c8cee4`.
+
+## Overnight Checkpoint (2026-03-18)
+
+Sprint 10 implementation has not started yet. No extension or Rust source files changed in this session; only `HANDOFF.md` and `PLAN_NOW.md` were updated to record the baton state.
+
+This session only established the Sprint 10 baton and verified scope:
+
+- `PLAN_NOW.md` now marks Sprint 10 as the active branch context
+- `HANDOFF.md` now closes the session cleanly instead of leaving `status: claimed`
+- The next session should begin implementation from the existing Sprint 9 scaffold in `extensions/nexode-vscode/`
+
+### Recommended first actions tomorrow
+
+1. Add the webview build pipeline and package scripts
+2. Implement the Synapse Grid panel and React webview
+3. Implement the Macro Kanban panel and React webview
+4. Add Tier 1 unit tests for `src/state.ts`
+5. Run extension and workspace verification before handing off to `pc`
 
 ## Current State
 

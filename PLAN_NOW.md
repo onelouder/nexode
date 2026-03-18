@@ -2,12 +2,17 @@
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
+> Status: queued on `agent/gpt/sprint-10-react-webviews` (implementation not started as of 2026-03-18)
 > Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
 > Previous sprint: Sprint 9 (VS Code Extension Scaffold) — PR #21, commit `0c8cee4`
 
 ## Objective
 
 Build the two React WebviewPanels (Synapse Grid, Macro Kanban) and add test coverage for the extension. This covers master-spec section 11 "Weeks 2-4" plus the R-011 test gap identified in Sprint 9 review.
+
+## Checkpoint
+
+Sprint 10 is queued with branch and scope defined, but no implementation files have been added yet. Tomorrow's session should start from the existing `extensions/nexode-vscode/` scaffold introduced in Sprint 9 (`0c8cee4`).
 
 ## Deliverables
 
