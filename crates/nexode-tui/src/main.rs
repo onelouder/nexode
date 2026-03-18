@@ -1,5 +1,5 @@
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use crossterm::cursor::{Hide, Show};
@@ -14,6 +14,7 @@ use nexode_proto::{
     MoveTask, OperatorCommand, PauseAgent, ResumeAgent, ResumeSlot, SlotDispatch, StateRequest,
     SubscribeRequest,
 };
+use nexode_tui::events::EventSeverity;
 use nexode_tui::input::{self, Action, ParsedCommand};
 use nexode_tui::state::{AppState, StatusLevel};
 use nexode_tui::ui;
@@ -32,6 +33,8 @@ const EVENT_CHANNEL_CAPACITY: usize = 256;
 const INPUT_CHANNEL_CAPACITY: usize = 128;
 const STATUS_MESSAGE_TTL: Duration = Duration::from_secs(5);
 const RENDER_INTERVAL: Duration = Duration::from_millis(66);
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -48,7 +51,8 @@ struct Cli {
 enum GrpcMessage {
     Event(HypervisorEvent),
     Snapshot(FullStateSnapshot),
-    Fatal(String),
+    Disconnected(String),
+    Reconnecting { attempt: u32, next_retry: Instant },
 }
 
 fn main() -> Result<(), DynError> {
@@ -68,10 +72,10 @@ async fn tokio_main(cli: Cli, local_offset: UtcOffset) -> Result<(), DynError> {
 
 async fn run(cli: Cli, local_offset: UtcOffset) -> Result<(), DynError> {
     let snapshot = fetch_snapshot(&cli.addr).await?;
-    let mut command_client = connect_client(&cli.addr).await?;
 
     let mut state = AppState::with_local_offset(local_offset);
     state.apply_snapshot(snapshot);
+    state.mark_connected();
     state.set_status_message(
         format!("Connected to {}", cli.addr),
         StatusLevel::Success,
@@ -104,25 +108,52 @@ async fn run(cli: Cli, local_offset: UtcOffset) -> Result<(), DynError> {
                 match grpc {
                     Some(GrpcMessage::Event(event)) => state.apply_event(event),
                     Some(GrpcMessage::Snapshot(snapshot)) => {
+                        let was_disconnected = !state.can_dispatch_commands();
                         state.apply_snapshot(snapshot);
+                        if was_disconnected {
+                            state.mark_connected();
+                            state.push_system_log_entry(
+                                "[RECONNECTED] connection to daemon restored".to_string(),
+                                EventSeverity::Normal,
+                            );
+                            state.set_status_message(
+                                format!("Reconnected to {}", cli.addr),
+                                StatusLevel::Success,
+                                STATUS_MESSAGE_TTL,
+                            );
+                        } else {
+                            state.set_status_message(
+                                "Event gap detected; state refreshed from daemon".to_string(),
+                                StatusLevel::Warning,
+                                STATUS_MESSAGE_TTL,
+                            );
+                        }
+                    }
+                    Some(GrpcMessage::Disconnected(reason)) => {
+                        state.mark_disconnected(Instant::now());
+                        state.push_system_log_entry(
+                            format!("[DISCONNECTED] {reason}"),
+                            EventSeverity::Warning,
+                        );
                         state.set_status_message(
-                            "Event gap detected; state refreshed from daemon".to_string(),
+                            "Disconnected from daemon; reconnecting...".to_string(),
                             StatusLevel::Warning,
                             STATUS_MESSAGE_TTL,
                         );
                     }
-                    Some(GrpcMessage::Fatal(message)) => {
-                        state.set_status_message(message.clone(), StatusLevel::Error, STATUS_MESSAGE_TTL);
-                        terminal.draw(|frame| ui::render(frame, &state))?;
-                        return Err(std::io::Error::other(message).into());
+                    Some(GrpcMessage::Reconnecting { attempt, next_retry }) => {
+                        state.mark_reconnecting(attempt, next_retry);
                     }
                     None => break,
                 }
             }
             key = input_rx.recv() => {
                 if let Some(key) = key {
-                    if let Some(action) = input::map_key_event(key, state.is_command_mode())
-                        && handle_action(action, &mut state, &mut command_client).await? {
+                    if let Some(action) = input::map_key_event(
+                        key,
+                        state.is_command_mode(),
+                        state.is_help_visible(),
+                    ) && handle_action(action, &mut state, &cli.addr).await? {
                         break;
                     }
                 } else {
@@ -143,13 +174,10 @@ async fn run(cli: Cli, local_offset: UtcOffset) -> Result<(), DynError> {
     Ok(())
 }
 
-async fn handle_action(
-    action: Action,
-    state: &mut AppState,
-    client: &mut TuiClient,
-) -> Result<bool, DynError> {
+async fn handle_action(action: Action, state: &mut AppState, addr: &str) -> Result<bool, DynError> {
     match action {
         Action::Quit => return Ok(true),
+        Action::ToggleHelp => state.toggle_help(),
         Action::MoveUp => state.move_selection(-1),
         Action::MoveDown => state.move_selection(1),
         Action::Select => {
@@ -165,7 +193,7 @@ async fn handle_action(
             if let Some(agent_id) = state.active_agent_id() {
                 dispatch_command(
                     state,
-                    client,
+                    addr,
                     operator_command::Action::PauseAgent(PauseAgent { agent_id }),
                 )
                 .await;
@@ -187,7 +215,7 @@ async fn handle_action(
                         instruction: String::new(),
                     })
                 };
-                dispatch_command(state, client, action).await;
+                dispatch_command(state, addr, action).await;
             } else {
                 state.set_status_message(
                     "Select a slot before resuming".to_string(),
@@ -200,7 +228,7 @@ async fn handle_action(
             if let Some(agent_id) = state.active_agent_id() {
                 dispatch_command(
                     state,
-                    client,
+                    addr,
                     operator_command::Action::KillAgent(KillAgent { agent_id }),
                 )
                 .await;
@@ -216,7 +244,30 @@ async fn handle_action(
         Action::ExitCommandMode => state.exit_command_mode(),
         Action::CommandChar(character) => state.push_command_char(character),
         Action::Backspace => state.pop_command_char(),
+        Action::HistoryPrevious => {
+            state.show_previous_command();
+        }
+        Action::HistoryNext => {
+            state.show_next_command();
+        }
+        Action::TabComplete => {
+            if let Some(completion) = input::complete_slot_id_command(
+                state.command_input_buffer(),
+                &state.known_slot_ids(),
+            ) {
+                let has_multiple_matches = completion.matches.len() > 1;
+                state.set_command_input_buffer(completion.buffer);
+                if has_multiple_matches {
+                    state.set_status_message(
+                        format!("Matches: {}", completion.matches.join(", ")),
+                        StatusLevel::Info,
+                        STATUS_MESSAGE_TTL,
+                    );
+                }
+            }
+        }
         Action::SubmitCommand => {
+            state.record_submitted_command();
             let parsed = match input::parse_command_buffer(
                 state.command_input_buffer(),
                 state.active_slot_id().as_deref(),
@@ -251,18 +302,31 @@ async fn handle_action(
             };
 
             state.exit_command_mode();
-            dispatch_command(state, client, action).await;
+            dispatch_command(state, addr, action).await;
         }
     }
 
     Ok(false)
 }
 
-async fn dispatch_command(
-    state: &mut AppState,
-    client: &mut TuiClient,
-    action: operator_command::Action,
-) {
+async fn dispatch_command(state: &mut AppState, addr: &str, action: operator_command::Action) {
+    if !state.can_dispatch_commands() {
+        state.reject_command_dispatch(STATUS_MESSAGE_TTL);
+        return;
+    }
+
+    let mut client = match connect_client(addr).await {
+        Ok(client) => client,
+        Err(error) => {
+            state.set_status_message(
+                format!("Command dispatch failed: {error}"),
+                StatusLevel::Error,
+                STATUS_MESSAGE_TTL,
+            );
+            return;
+        }
+    };
+
     let response = client
         .dispatch_command(Request::new(OperatorCommand {
             command_id: format!("tui-{}", command_id()),
@@ -296,27 +360,20 @@ async fn dispatch_command(
 
 async fn run_grpc_receiver(addr: String, starting_sequence: u64, tx: mpsc::Sender<GrpcMessage>) {
     let mut last_sequence = starting_sequence;
-    let mut event_client = match connect_client(&addr).await {
-        Ok(client) => client,
+    let (mut _event_client, mut stream) = match connect_and_subscribe(&addr).await {
+        Ok((client, stream)) => (client, stream),
         Err(error) => {
-            let _ = tx
-                .send(GrpcMessage::Fatal(format!(
-                    "failed to connect event stream at {addr}: {error}"
-                )))
-                .await;
-            return;
-        }
-    };
-
-    let mut stream = match subscribe_events(&mut event_client).await {
-        Ok(stream) => stream,
-        Err(error) => {
-            let _ = tx
-                .send(GrpcMessage::Fatal(format!(
-                    "failed to subscribe to daemon events at {addr}: {error}"
-                )))
-                .await;
-            return;
+            let Some((client, stream, snapshot_sequence)) = reconnect_event_stream(
+                &addr,
+                &tx,
+                format!("failed to connect event stream at {addr}: {error}"),
+            )
+            .await
+            else {
+                return;
+            };
+            last_sequence = snapshot_sequence;
+            (client, stream)
         }
     };
 
@@ -342,12 +399,20 @@ async fn run_grpc_receiver(addr: String, starting_sequence: u64, tx: mpsc::Sende
                             continue;
                         }
                         Err(error) => {
-                            let _ = tx
-                                .send(GrpcMessage::Fatal(format!(
-                                    "failed to refresh state after event gap: {error}"
-                                )))
-                                .await;
-                            break;
+                            let Some((client, new_stream, snapshot_sequence)) =
+                                reconnect_event_stream(
+                                    &addr,
+                                    &tx,
+                                    format!("failed to refresh state after event gap: {error}"),
+                                )
+                                .await
+                            else {
+                                break;
+                            };
+                            _event_client = client;
+                            stream = new_stream;
+                            last_sequence = snapshot_sequence;
+                            continue;
                         }
                     }
                 }
@@ -358,61 +423,73 @@ async fn run_grpc_receiver(addr: String, starting_sequence: u64, tx: mpsc::Sende
                 }
             }
             Ok(None) => {
-                let _ = tx
-                    .send(GrpcMessage::Fatal(
-                        "daemon event stream closed unexpectedly".to_string(),
-                    ))
-                    .await;
-                break;
-            }
-            Err(status) if status.code() == tonic::Code::DataLoss => {
-                match fetch_snapshot(&addr).await {
-                    Ok(snapshot) => {
-                        last_sequence = snapshot.last_event_sequence;
-                        if tx.send(GrpcMessage::Snapshot(snapshot)).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        let _ = tx
-                            .send(GrpcMessage::Fatal(format!(
-                                "failed to refresh state after stream lag: {error}"
-                            )))
-                            .await;
-                        break;
-                    }
-                }
-
-                event_client = match connect_client(&addr).await {
-                    Ok(client) => client,
-                    Err(error) => {
-                        let _ = tx
-                            .send(GrpcMessage::Fatal(format!(
-                                "failed to reconnect to daemon at {addr}: {error}"
-                            )))
-                            .await;
-                        break;
-                    }
+                let Some((client, new_stream, snapshot_sequence)) = reconnect_event_stream(
+                    &addr,
+                    &tx,
+                    "daemon event stream closed unexpectedly".to_string(),
+                )
+                .await
+                else {
+                    break;
                 };
-                stream = match subscribe_events(&mut event_client).await {
-                    Ok(stream) => stream,
-                    Err(error) => {
-                        let _ = tx
-                            .send(GrpcMessage::Fatal(format!(
-                                "failed to resubscribe after stream lag: {error}"
-                            )))
-                            .await;
-                        break;
-                    }
-                };
+                _event_client = client;
+                stream = new_stream;
+                last_sequence = snapshot_sequence;
             }
             Err(status) => {
-                let _ = tx
-                    .send(GrpcMessage::Fatal(format!(
-                        "daemon event stream error: {status}"
-                    )))
-                    .await;
-                break;
+                let Some((client, new_stream, snapshot_sequence)) = reconnect_event_stream(
+                    &addr,
+                    &tx,
+                    format!("daemon event stream error: {status}"),
+                )
+                .await
+                else {
+                    break;
+                };
+                _event_client = client;
+                stream = new_stream;
+                last_sequence = snapshot_sequence;
+            }
+        }
+    }
+}
+
+async fn reconnect_event_stream(
+    addr: &str,
+    tx: &mpsc::Sender<GrpcMessage>,
+    reason: String,
+) -> Option<(TuiClient, tonic::Streaming<HypervisorEvent>, u64)> {
+    if tx.send(GrpcMessage::Disconnected(reason)).await.is_err() {
+        return None;
+    }
+
+    let mut attempt = 1u32;
+    let mut delay = INITIAL_RECONNECT_DELAY;
+    loop {
+        let next_retry = Instant::now() + delay;
+        if tx
+            .send(GrpcMessage::Reconnecting {
+                attempt,
+                next_retry,
+            })
+            .await
+            .is_err()
+        {
+            return None;
+        }
+
+        tokio::time::sleep(delay).await;
+        match connect_snapshot_and_subscribe(addr).await {
+            Ok((client, snapshot, stream)) => {
+                let snapshot_sequence = snapshot.last_event_sequence;
+                if tx.send(GrpcMessage::Snapshot(snapshot)).await.is_err() {
+                    return None;
+                }
+                return Some((client, stream, snapshot_sequence));
+            }
+            Err(_) => {
+                attempt = attempt.saturating_add(1);
+                delay = delay.saturating_mul(2).min(MAX_RECONNECT_DELAY);
             }
         }
     }
@@ -420,13 +497,44 @@ async fn run_grpc_receiver(addr: String, starting_sequence: u64, tx: mpsc::Sende
 
 async fn fetch_snapshot(addr: &str) -> Result<FullStateSnapshot, DynError> {
     let mut snapshot_client = connect_client(addr).await?;
-    Ok(snapshot_client
+    fetch_snapshot_with_client(&mut snapshot_client, addr).await
+}
+
+async fn fetch_snapshot_with_client(
+    client: &mut TuiClient,
+    addr: &str,
+) -> Result<FullStateSnapshot, DynError> {
+    Ok(client
         .get_full_state(Request::new(StateRequest {}))
         .await
         .map_err(|error| {
             std::io::Error::other(format!("failed to fetch daemon state from {addr}: {error}"))
         })?
         .into_inner())
+}
+
+async fn connect_and_subscribe(
+    addr: &str,
+) -> Result<(TuiClient, tonic::Streaming<HypervisorEvent>), DynError> {
+    let mut client = connect_client(addr).await?;
+    let stream = subscribe_events(&mut client).await?;
+    Ok((client, stream))
+}
+
+async fn connect_snapshot_and_subscribe(
+    addr: &str,
+) -> Result<
+    (
+        TuiClient,
+        FullStateSnapshot,
+        tonic::Streaming<HypervisorEvent>,
+    ),
+    DynError,
+> {
+    let mut client = connect_client(addr).await?;
+    let snapshot = fetch_snapshot_with_client(&mut client, addr).await?;
+    let stream = subscribe_events(&mut client).await?;
+    Ok((client, snapshot, stream))
 }
 
 async fn connect_client(addr: &str) -> Result<TuiClient, DynError> {

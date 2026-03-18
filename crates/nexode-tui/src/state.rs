@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::events::{EventLogEntry, format_event_log_entry};
+use crate::events::{EventLogEntry, EventSeverity, format_event_log_entry, format_timestamp_ms};
 use nexode_proto::hypervisor_event;
 use nexode_proto::{AgentSlot, FullStateSnapshot, HypervisorEvent, Project, TaskNode};
 use time::UtcOffset;
 
 const MAX_EVENT_LOG: usize = 100;
+const MAX_COMMAND_HISTORY: usize = 50;
 
 pub const PANEL_TREE: usize = 0;
 pub const PANEL_DETAIL: usize = 1;
@@ -26,6 +27,13 @@ pub struct StatusMessage {
     pub text: String,
     pub level: StatusLevel,
     pub expires_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    Connected,
+    Disconnected { since: Instant },
+    Reconnecting { attempt: u32, next_retry: Instant },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,12 +63,16 @@ pub struct AppState {
     pub task_dag: Vec<TaskNode>,
     pub total_session_cost: f64,
     pub session_budget_max_usd: f64,
+    pub connection_status: ConnectionStatus,
     pub last_event_sequence: u64,
     pub event_log: VecDeque<EventLogEntry>,
     pub selected_panel_index: usize,
     pub selected_tree_index: usize,
     pub selected_slot_id: Option<String>,
     pub command_input_buffer: String,
+    pub command_history: Vec<String>,
+    pub history_index: Option<usize>,
+    pub show_help: bool,
     pub status_message: Option<StatusMessage>,
 }
 
@@ -78,12 +90,16 @@ impl AppState {
             task_dag: Vec::new(),
             total_session_cost: 0.0,
             session_budget_max_usd: 0.0,
+            connection_status: ConnectionStatus::Connected,
             last_event_sequence: 0,
             event_log: VecDeque::new(),
             selected_panel_index: PANEL_TREE,
             selected_tree_index: 0,
             selected_slot_id: None,
             command_input_buffer: String::new(),
+            command_history: Vec::new(),
+            history_index: None,
+            show_help: false,
             status_message: None,
         }
     }
@@ -227,11 +243,13 @@ impl AppState {
     pub fn enter_command_mode(&mut self) {
         self.selected_panel_index = PANEL_COMMAND;
         self.command_input_buffer.clear();
+        self.history_index = None;
     }
 
     pub fn exit_command_mode(&mut self) {
         self.selected_panel_index = PANEL_TREE;
         self.command_input_buffer.clear();
+        self.history_index = None;
     }
 
     pub fn is_command_mode(&self) -> bool {
@@ -240,14 +258,126 @@ impl AppState {
 
     pub fn push_command_char(&mut self, character: char) {
         self.command_input_buffer.push(character);
+        self.history_index = None;
     }
 
     pub fn pop_command_char(&mut self) {
         self.command_input_buffer.pop();
+        self.history_index = None;
     }
 
     pub fn command_input_buffer(&self) -> &str {
         &self.command_input_buffer
+    }
+
+    pub fn set_command_input_buffer(&mut self, buffer: String) {
+        self.command_input_buffer = buffer;
+    }
+
+    pub fn record_submitted_command(&mut self) {
+        let command = self.command_input_buffer.trim();
+        if command.is_empty() {
+            self.history_index = None;
+            return;
+        }
+
+        if self.command_history.len() == MAX_COMMAND_HISTORY {
+            self.command_history.remove(0);
+        }
+        self.command_history.push(command.to_string());
+        self.history_index = None;
+    }
+
+    pub fn show_previous_command(&mut self) -> bool {
+        if self.command_history.is_empty() {
+            return false;
+        }
+
+        let next_index = match self.history_index {
+            None => self.command_history.len().saturating_sub(1),
+            Some(index) => index.saturating_sub(1),
+        };
+        self.history_index = Some(next_index);
+        self.command_input_buffer = self.command_history[next_index].clone();
+        true
+    }
+
+    pub fn show_next_command(&mut self) -> bool {
+        if self.command_history.is_empty() {
+            self.command_input_buffer.clear();
+            self.history_index = None;
+            return false;
+        }
+
+        match self.history_index {
+            Some(index) if index + 1 < self.command_history.len() => {
+                let next_index = index + 1;
+                self.history_index = Some(next_index);
+                self.command_input_buffer = self.command_history[next_index].clone();
+            }
+            Some(_) | None => {
+                self.history_index = None;
+                self.command_input_buffer.clear();
+            }
+        }
+
+        true
+    }
+
+    pub fn known_slot_ids(&self) -> Vec<String> {
+        self.projects
+            .iter()
+            .flat_map(|project| project.slots.iter().map(|slot| slot.id.clone()))
+            .collect()
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+    }
+
+    pub fn is_help_visible(&self) -> bool {
+        self.show_help
+    }
+
+    pub fn mark_connected(&mut self) {
+        self.connection_status = ConnectionStatus::Connected;
+    }
+
+    pub fn mark_disconnected(&mut self, since: Instant) {
+        self.connection_status = ConnectionStatus::Disconnected { since };
+    }
+
+    pub fn mark_reconnecting(&mut self, attempt: u32, next_retry: Instant) {
+        self.connection_status = ConnectionStatus::Reconnecting {
+            attempt,
+            next_retry,
+        };
+    }
+
+    pub fn can_dispatch_commands(&self) -> bool {
+        matches!(self.connection_status, ConnectionStatus::Connected)
+    }
+
+    pub fn reject_command_dispatch(&mut self, duration: Duration) {
+        self.set_status_message(
+            "Not connected to daemon".to_string(),
+            StatusLevel::Warning,
+            duration,
+        );
+    }
+
+    pub fn push_system_log_entry(&mut self, message: String, severity: EventSeverity) {
+        let timestamp_ms = current_timestamp_ms();
+        self.event_log.push_front(EventLogEntry {
+            event_sequence: self.last_event_sequence,
+            timestamp_ms,
+            timestamp_label: format_timestamp_ms(timestamp_ms, self.local_offset),
+            message,
+            severity,
+        });
+        while self.event_log.len() > MAX_EVENT_LOG {
+            self.event_log.pop_back();
+        }
     }
 
     pub fn set_status_message(&mut self, text: String, level: StatusLevel, duration: Duration) {
@@ -305,6 +435,13 @@ impl AppState {
 
         self.selected_tree_index = self.selected_tree_index.min(row_count - 1);
     }
+}
+
+fn current_timestamp_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -503,5 +640,121 @@ mod tests {
         let state = AppState::default();
 
         assert_eq!(state.event_log_title(), "Event Log (UTC)");
+    }
+
+    #[test]
+    fn connection_status_transitions_support_reconnect_flow() {
+        let mut state = AppState::default();
+        let disconnected_at = Instant::now();
+        let retry_at = disconnected_at + Duration::from_secs(2);
+
+        assert!(matches!(
+            state.connection_status,
+            ConnectionStatus::Connected
+        ));
+        assert!(state.can_dispatch_commands());
+
+        state.mark_disconnected(disconnected_at);
+        assert!(matches!(
+            state.connection_status,
+            ConnectionStatus::Disconnected { since } if since == disconnected_at
+        ));
+        assert!(!state.can_dispatch_commands());
+
+        state.mark_reconnecting(2, retry_at);
+        assert!(matches!(
+            state.connection_status,
+            ConnectionStatus::Reconnecting { attempt: 2, next_retry } if next_retry == retry_at
+        ));
+        assert!(!state.can_dispatch_commands());
+
+        state.mark_connected();
+        assert!(matches!(
+            state.connection_status,
+            ConnectionStatus::Connected
+        ));
+        assert!(state.can_dispatch_commands());
+    }
+
+    #[test]
+    fn disconnected_state_rejects_command_dispatch() {
+        let mut state = AppState::default();
+        state.mark_disconnected(Instant::now());
+
+        state.reject_command_dispatch(Duration::from_secs(5));
+
+        assert_eq!(
+            state
+                .status_message
+                .as_ref()
+                .map(|message| message.text.as_str()),
+            Some("Not connected to daemon")
+        );
+        assert_eq!(
+            state.status_message.as_ref().map(|message| message.level),
+            Some(StatusLevel::Warning)
+        );
+    }
+
+    #[test]
+    fn command_history_cycles_and_returns_to_empty() {
+        let mut state = AppState::default();
+
+        state.set_command_input_buffer("first".to_string());
+        state.record_submitted_command();
+        state.set_command_input_buffer("second".to_string());
+        state.record_submitted_command();
+        state.set_command_input_buffer("third".to_string());
+        state.record_submitted_command();
+
+        assert!(state.show_previous_command());
+        assert_eq!(state.command_input_buffer(), "third");
+
+        assert!(state.show_previous_command());
+        assert_eq!(state.command_input_buffer(), "second");
+
+        assert!(state.show_previous_command());
+        assert_eq!(state.command_input_buffer(), "first");
+
+        assert!(state.show_next_command());
+        assert_eq!(state.command_input_buffer(), "second");
+
+        assert!(state.show_next_command());
+        assert_eq!(state.command_input_buffer(), "third");
+
+        assert!(state.show_next_command());
+        assert_eq!(state.command_input_buffer(), "");
+        assert_eq!(state.history_index, None);
+    }
+
+    #[test]
+    fn command_history_is_capped_at_fifty_entries() {
+        let mut state = AppState::default();
+
+        for index in 0..55 {
+            state.set_command_input_buffer(format!("command-{index}"));
+            state.record_submitted_command();
+        }
+
+        assert_eq!(state.command_history.len(), 50);
+        assert_eq!(
+            state.command_history.first().map(String::as_str),
+            Some("command-5")
+        );
+        assert_eq!(
+            state.command_history.last().map(String::as_str),
+            Some("command-54")
+        );
+    }
+
+    #[test]
+    fn help_overlay_toggle_tracks_visibility() {
+        let mut state = AppState::default();
+
+        assert!(!state.is_help_visible());
+        state.toggle_help();
+        assert!(state.is_help_visible());
+        state.toggle_help();
+        assert!(!state.is_help_visible());
     }
 }

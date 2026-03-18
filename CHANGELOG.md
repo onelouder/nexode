@@ -15,3 +15,4 @@
 - [2026-03-15] [gpt] Added Sprint 5 `nexode-tui`: a ratatui dashboard with live gRPC state, event log, keyboard controls, command dispatch, and terminal-safe shutdown handling
 - [2026-03-15] [pc] Fixed TUI status colors to align with kanban spec D-009 (I-026)
 - [2026-03-15] [gpt] Completed Sprint 6: fixed TUI gap recovery and timezone handling, fixed Review resume and immediate merge draining, added daemon→TUI gRPC integration coverage, and cleaned up CLI/docs polish
+- [2026-03-17] [gpt] Completed Sprint 7: hardened TUI reconnect behavior, command history/completion/status UX, help overlay, demo wait-for-DONE flow, and LoopDetected label parsing

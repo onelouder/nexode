@@ -24,7 +24,7 @@ pub fn format_event_log_entry(event: &HypervisorEvent, local_offset: UtcOffset) 
     EventLogEntry {
         event_sequence: event.event_sequence,
         timestamp_ms: event.timestamp_ms,
-        timestamp_label: format_timestamp(event.timestamp_ms, local_offset),
+        timestamp_label: format_timestamp_ms(event.timestamp_ms, local_offset),
         message: format_event_message(event),
         severity: event_severity(event),
     }
@@ -63,12 +63,9 @@ pub fn format_event_message(event: &HypervisorEvent) -> String {
             payload.slot_id, payload.old_agent_id, payload.new_agent_id, payload.reason
         ),
         Some(hypervisor_event::Payload::ObserverAlert(payload)) => match payload.detail.as_ref() {
-            Some(observer_alert::Detail::LoopDetected(detail)) => format!(
-                "ObserverAlert {}: loop/stuck/budget {} ({})",
-                payload.slot_id,
-                detail.reason,
-                format_observer_intervention(detail.intervention)
-            ),
+            Some(observer_alert::Detail::LoopDetected(detail)) => {
+                format_loop_detected_alert(&payload.slot_id, &detail.reason, detail.intervention)
+            }
             Some(observer_alert::Detail::SandboxViolation(detail)) => format!(
                 "ObserverAlert {}: sandbox {} ({})",
                 payload.slot_id, detail.reason, detail.path
@@ -109,7 +106,7 @@ fn event_severity(event: &HypervisorEvent) -> EventSeverity {
     }
 }
 
-fn format_timestamp(timestamp_ms: u64, local_offset: UtcOffset) -> String {
+pub(crate) fn format_timestamp_ms(timestamp_ms: u64, local_offset: UtcOffset) -> String {
     format_timestamp_with_offset(timestamp_ms, local_offset)
 }
 
@@ -175,6 +172,33 @@ pub fn format_observer_intervention(raw: i32) -> &'static str {
 
 fn display_slot(slot_id: &str) -> &str {
     if slot_id.is_empty() { "-" } else { slot_id }
+}
+
+fn format_loop_detected_alert(slot_id: &str, reason: &str, intervention: i32) -> String {
+    let summary = if let Some(label) = loop_detected_label(reason) {
+        format!("{label} {reason}")
+    } else {
+        reason.to_string()
+    };
+    format!(
+        "ObserverAlert {}: {} ({})",
+        slot_id,
+        summary,
+        format_observer_intervention(intervention)
+    )
+}
+
+fn loop_detected_label(reason: &str) -> Option<&'static str> {
+    let normalized = reason.trim().to_ascii_lowercase();
+    if normalized.contains("repeated") || normalized.contains("loop") {
+        Some("Loop Detected")
+    } else if normalized.contains("stuck") || normalized.contains("timeout") {
+        Some("Stuck")
+    } else if normalized.contains("budget") || normalized.contains("velocity") {
+        Some("Budget Velocity")
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -256,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn loop_alert_mentions_proto_flattening_kind() {
+    fn loop_alert_uses_budget_velocity_label_when_reason_mentions_budget() {
         let event = HypervisorEvent {
             event_id: "evt-4".to_string(),
             timestamp_ms: 1_763_340_000_000,
@@ -275,7 +299,55 @@ mod tests {
         assert!(
             format_event_log_entry(&event, UtcOffset::UTC)
                 .message
-                .contains("loop/stuck/budget")
+                .contains("Budget Velocity")
+        );
+    }
+
+    #[test]
+    fn loop_alert_uses_stuck_label_when_reason_mentions_timeout() {
+        let event = HypervisorEvent {
+            event_id: "evt-6".to_string(),
+            timestamp_ms: 1_763_340_000_000,
+            barrier_id: String::new(),
+            event_sequence: 15,
+            payload: Some(hypervisor_event::Payload::ObserverAlert(ObserverAlert {
+                slot_id: "slot-a".to_string(),
+                agent_id: "agent-1".to_string(),
+                detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
+                    reason: "timeout waiting for worktree changes".to_string(),
+                    intervention: ObserverIntervention::Pause as i32,
+                })),
+            })),
+        };
+
+        assert!(
+            format_event_log_entry(&event, UtcOffset::UTC)
+                .message
+                .contains("Stuck")
+        );
+    }
+
+    #[test]
+    fn loop_alert_uses_loop_label_when_reason_mentions_repeated_output() {
+        let event = HypervisorEvent {
+            event_id: "evt-7".to_string(),
+            timestamp_ms: 1_763_340_000_000,
+            barrier_id: String::new(),
+            event_sequence: 16,
+            payload: Some(hypervisor_event::Payload::ObserverAlert(ObserverAlert {
+                slot_id: "slot-a".to_string(),
+                agent_id: "agent-1".to_string(),
+                detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
+                    reason: "observed repeated output lines".to_string(),
+                    intervention: ObserverIntervention::Alert as i32,
+                })),
+            })),
+        };
+
+        assert!(
+            format_event_log_entry(&event, UtcOffset::UTC)
+                .message
+                .contains("Loop Detected")
         );
     }
 

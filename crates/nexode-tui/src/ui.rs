@@ -3,11 +3,11 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 use crate::events::{EventSeverity, format_agent_mode, format_task_status};
 use crate::state::{
-    AppState, PANEL_COMMAND, PANEL_DETAIL, PANEL_LOG, PANEL_TREE, StatusLevel, TreeRowKind,
+    AppState, ConnectionStatus, PANEL_DETAIL, PANEL_LOG, PANEL_TREE, StatusLevel, TreeRowKind,
 };
 
 pub fn render(frame: &mut Frame<'_>, state: &AppState) {
@@ -30,7 +30,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
         .split(body[0]);
     let header = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .constraints([Constraint::Length(18), Constraint::Min(24)])
         .split(outer[0]);
 
     render_header(frame, state, header[0], header[1]);
@@ -38,32 +38,30 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     render_slot_detail(frame, state, top[1]);
     render_event_log(frame, state, body[1]);
     render_footer(frame, state, outer[2]);
+    if state.is_help_visible() {
+        render_help_overlay(frame);
+    }
 }
 
 fn render_header(frame: &mut Frame<'_>, state: &AppState, title_area: Rect, budget_area: Rect) {
-    let title = if let Some(message) = state.status_message.as_ref() {
-        Line::from(vec![
-            Span::styled(
-                "Nexode Dashboard",
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(&message.text, status_style(message.level)),
-        ])
-    } else {
-        Line::from(vec![Span::styled(
-            "Nexode Dashboard",
-            Style::default().add_modifier(Modifier::BOLD),
-        )])
-    };
+    let title = Line::from(vec![Span::styled(
+        "Nexode Dashboard",
+        Style::default().add_modifier(Modifier::BOLD),
+    )]);
+
+    let mut detail_spans = Vec::new();
+    if let Some(indicator) = connection_indicator(state) {
+        detail_spans.push(indicator);
+        detail_spans.push(Span::raw("  "));
+    }
+    detail_spans.push(Span::raw(format!(
+        "Session: ${:.2}/${:.2}",
+        state.total_session_cost, state.session_budget_max_usd
+    )));
 
     frame.render_widget(Paragraph::new(title), title_area);
     frame.render_widget(
-        Paragraph::new(format!(
-            "Session: ${:.2}/${:.2}",
-            state.total_session_cost, state.session_budget_max_usd
-        ))
-        .alignment(Alignment::Right),
+        Paragraph::new(Line::from(detail_spans)).alignment(Alignment::Right),
         budget_area,
     );
 }
@@ -185,33 +183,45 @@ fn render_event_log(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
 }
 
 fn render_footer(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
-    let line = if state.is_command_mode() {
-        Line::from(vec![
+    let (line, style) = if state.is_command_mode() {
+        let mut spans = vec![
             Span::styled(":", Style::default().fg(Color::Yellow)),
             Span::raw(state.command_input_buffer()),
-        ])
+        ];
+        if let Some(message) = state.status_message.as_ref() {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(&message.text, status_style(message.level)));
+        }
+        (Line::from(spans), Style::default().fg(Color::Yellow))
+    } else if let Some(message) = state.status_message.as_ref() {
+        (
+            Line::from(vec![Span::styled(
+                &message.text,
+                status_style(message.level),
+            )]),
+            status_style(message.level),
+        )
     } else {
-        Line::from(vec![
-            Span::styled("↑/↓", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" navigate  "),
-            Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" select  "),
-            Span::styled("p/r/k", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" control  "),
-            Span::styled(":", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" command  "),
-            Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(" quit"),
-        ])
+        (
+            Line::from(vec![
+                Span::styled("↑/↓", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" navigate  "),
+                Span::styled("Enter", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" select  "),
+                Span::styled("p/r/k", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" control  "),
+                Span::styled(":", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" command  "),
+                Span::styled("?", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" help  "),
+                Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(" quit"),
+            ]),
+            Style::default().fg(Color::Gray),
+        )
     };
 
-    let paragraph = Paragraph::new(line)
-        .style(if state.selected_panel_index == PANEL_COMMAND {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::Gray)
-        })
-        .alignment(Alignment::Left);
+    let paragraph = Paragraph::new(line).style(style).alignment(Alignment::Left);
     frame.render_widget(paragraph, area);
 }
 
@@ -278,4 +288,93 @@ fn status_glyph(raw: i32) -> &'static str {
 
 fn blank_fallback(value: &str) -> &str {
     if value.is_empty() { "-" } else { value }
+}
+
+fn connection_indicator(state: &AppState) -> Option<Span<'static>> {
+    match state.connection_status {
+        ConnectionStatus::Connected => None,
+        ConnectionStatus::Disconnected { .. } => Some(Span::styled(
+            "WARNING Disconnected",
+            Style::default().fg(Color::Yellow),
+        )),
+        ConnectionStatus::Reconnecting {
+            attempt,
+            next_retry,
+        } => Some(Span::styled(
+            format!(
+                "WARNING Reconnecting #{attempt} (retry in {}s)",
+                retry_in_seconds(next_retry)
+            ),
+            Style::default().fg(Color::Yellow),
+        )),
+    }
+}
+
+fn retry_in_seconds(next_retry: std::time::Instant) -> u64 {
+    let remaining = next_retry.saturating_duration_since(std::time::Instant::now());
+    let seconds = remaining.as_secs();
+    if remaining.subsec_nanos() > 0 {
+        seconds.saturating_add(1)
+    } else {
+        seconds
+    }
+}
+
+fn render_help_overlay(frame: &mut Frame<'_>) {
+    let area = centered_rect(68, 70, frame.area());
+    let help = Paragraph::new(
+        "\n\
+Navigation\n\
+  Up/Down   Navigate project/slot tree\n\
+  Enter     Select slot\n\
+  q         Quit\n\
+  Ctrl+C    Quit\n\
+\n\
+Commands\n\
+  p         Pause selected slot\n\
+  r         Resume selected slot\n\
+  k         Kill selected slot\n\
+  :         Enter command mode\n\
+  Esc       Exit command mode\n\
+\n\
+Command Mode\n\
+  move <task-id> <status>          Move task to status\n\
+  resume-slot <slot-id> [instr]    Resume slot with instruction\n\
+  Up/Down                          Command history\n\
+  Tab                              Complete slot id\n\
+  <text>                           Chat dispatch to selected slot\n\
+\n\
+Other\n\
+  ?         Toggle this help\n",
+    )
+    .block(
+        Block::default()
+            .title("Nexode TUI - Keyboard Reference")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan)),
+    )
+    .alignment(Alignment::Left)
+    .wrap(Wrap { trim: false });
+
+    frame.render_widget(Clear, area);
+    frame.render_widget(help, area);
+}
+
+fn centered_rect(width_percent: u16, height_percent: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - height_percent) / 2),
+            Constraint::Percentage(height_percent),
+            Constraint::Percentage((100 - height_percent) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - width_percent) / 2),
+            Constraint::Percentage(width_percent),
+            Constraint::Percentage((100 - width_percent) / 2),
+        ])
+        .split(vertical[1])[1]
 }

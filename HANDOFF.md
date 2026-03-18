@@ -1,91 +1,66 @@
 ---
-agent: pc
+agent: gpt
 status: handoff
-from: pc
-timestamp: 2026-03-17T01:40:00-07:00
+from: gpt
+timestamp: 2026-03-17T02:16:09-07:00
 task: "Sprint 7 — TUI Command Hardening"
-branch: "main"
-next: gpt
+branch: "agent/gpt/sprint-7-tui-command-hardening"
+next: pc
 ---
 
-# Handoff: Sprint 7 Ready for Codex
+# Handoff: Sprint 7 Complete
 
-## What Just Happened
+## What Was Done
 
-Sprint 6 (Integration Polish) was reviewed and merged to `main` at `3ae2ffd`. All exit criteria met, 97 tests pass, no regressions. Five issues closed (I-007, I-014, I-025, I-027, I-028). One new low-severity finding: I-029 (Claude harness doc omits `--permission-mode` flags).
+Sprint 7 is implemented on `agent/gpt/sprint-7-tui-command-hardening`.
 
-Sprint 6 delivered:
-- I-027: Gap recovery replays triggering event when snapshot is behind
-- I-028: Timezone offset captured before tokio, threaded through AppState
-- I-025: `resume_target()` handles Review state
-- I-007: Merge queue drains immediately on enqueue
-- Cross-crate daemon→TUI gRPC integration test
-- CLI: `--version` on both binaries
-- I-014: Agent harness doc updated
+- Part 1: Added TUI reconnect hardening in `crates/nexode-tui/src/main.rs` and `crates/nexode-tui/src/state.rs`
+  - `ConnectionStatus` in `AppState`
+  - gRPC event receiver now auto-reconnects with exponential backoff (1s -> 30s)
+  - stale dashboard stays rendered while disconnected/reconnecting
+  - command dispatch is rejected with a status-bar warning while disconnected
+  - event log records `[DISCONNECTED]` and `[RECONNECTED]` entries
+- Part 2: Added command UX improvements in `crates/nexode-tui/src/input.rs`, `crates/nexode-tui/src/state.rs`, and `crates/nexode-tui/src/ui.rs`
+  - command history on `Up`/`Down`, capped at 50 entries
+  - footer status bar with 5-second auto-clear
+  - slot ID tab-complete for `move` and `resume-slot`
+- Part 3: Added `?` help overlay modal in `crates/nexode-tui/src/ui.rs`
+  - overlay renders above the dashboard via `Clear` + centered paragraph
+  - while visible, only `?`, `q`, and `Ctrl+C` are active
+- Part 4:
+  - `scripts/demo.sh` now waits for `slot-a` to reach `done` after `move-task`
+  - `crates/nexode-tui/src/events.rs` now parses LoopDetected reason strings into `Loop Detected`, `Stuck`, and `Budget Velocity`
 
-Sprint 6 review: `docs/reviews/sprint-6-review.md`
+## Verification
 
-## Sprint 7 Scope
+Passed:
 
-Sprint 7 makes the TUI production-ready with reconnection resilience, better command UX, and a help overlay. It also closes two open issues.
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `cargo build -p nexode-tui`
+- `cargo run -p nexode-tui -- --help`
 
-### Part 1: Reconnection
+Note:
 
-- Auto-reconnect on gRPC disconnect with exponential backoff (1s→30s cap)
-- `ConnectionStatus` enum in `AppState` (Connected / Disconnected / Reconnecting)
-- Header bar indicator when disconnected
-- Command dispatch blocked with status message when not connected
-- Event log entries for disconnect/reconnect events
+- The first `cargo test --workspace` run hit one existing daemon test timing failure (`engine::tests::dispatch_command_returns_validated_outcomes`). It passed immediately in isolation and the second full workspace run passed cleanly. No daemon code was changed in this sprint.
 
-### Part 2: Command UX
+## Outputs
 
-- Command history (↑/↓ in command mode, capped at 50)
-- Status bar feedback with 5-second auto-clear
-- Tab-complete for slot IDs in `:move` and `:resume-slot`
-
-### Part 3: Help Overlay
-
-- `?` toggles a keybinding reference overlay
-- Rendered on top of the dashboard via `Clear` + centered `Paragraph`
-
-### Part 4: Issue Fixes
-
-- I-019: `demo.sh` waits for DONE after MoveTask
-- I-024 (partial): Parse LoopDetected reason strings for specific labels
-
-## Sprint 7 Prompt
-
-`.agents/prompts/sprint-7-codex.md`
-
-## Read First
-
-- `AGENTS.md`
-- `.agents/openai.md`
-- `HANDOFF.md` (this file)
+- `crates/nexode-tui/src/main.rs`
+- `crates/nexode-tui/src/input.rs`
+- `crates/nexode-tui/src/state.rs`
+- `crates/nexode-tui/src/ui.rs`
+- `crates/nexode-tui/src/events.rs`
+- `scripts/demo.sh`
 - `PLAN_NOW.md`
-- `.agents/prompts/sprint-7-codex.md` — full sprint instructions
-- `ISSUES.md` — focus on I-019, I-024
-- `docs/reviews/sprint-6-review.md`
-- `crates/nexode-tui/src/` — all TUI source files
+- `CHANGELOG.md`
 
-## Context for Codex
+## Next Agent
 
-### TUI Source
+Recommended next step: `pc` review Sprint 7 and merge if approved.
 
-The TUI crate at `crates/nexode-tui/` has a lib.rs (exposing modules) and these source files:
-- `main.rs` — gRPC bootstrap, async event loop, command dispatch, terminal cleanup, reconnection logic goes here
-- `state.rs` — `AppState`, `apply_event`, `apply_snapshot`, `ConnectionStatus` and command history go here
-- `events.rs` — event formatting with pre-computed timezone offset, LoopDetected parsing goes here
-- `input.rs` — key bindings, command parsing, help toggle and history navigation go here
-- `ui.rs` — dashboard rendering, help overlay and status bar go here
+Residual risk to review:
 
-### Test Baseline
-
-- Daemon: 67 lib + 3 bin = 70 tests
-- Ctl: 4 tests
-- TUI: 17 lib + 6 bin = 23 tests
-- Total: 97 tests
-
-### Key Constraint
-
-This sprint is TUI-only. Do NOT modify daemon, proto, or ctl crates. The only non-TUI change is `scripts/demo.sh` (I-019).
+- The reconnect path is covered by the new state/input tests and the full workspace suite, but it was not manually smoke-tested against a live daemon restart in this session because the TUI interaction is terminal-driven.
