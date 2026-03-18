@@ -15,13 +15,14 @@ next: gpt
 
 ## Overnight Checkpoint (2026-03-18)
 
-Sprint 10 implementation has not started yet. No extension or Rust source files changed in this session; only `HANDOFF.md` and `PLAN_NOW.md` were updated to record the baton state.
+Sprint 10 implementation has not started yet. No extension or Rust source files were edited in this session; the intentional changes here are only the baton updates in `HANDOFF.md` and `PLAN_NOW.md`.
 
 This session only established the Sprint 10 baton and verified scope:
 
 - `PLAN_NOW.md` now marks Sprint 10 as the active branch context
 - `HANDOFF.md` now closes the session cleanly instead of leaving `status: claimed`
 - The next session should begin implementation from the existing Sprint 9 scaffold in `extensions/nexode-vscode/`
+- `git pull --rebase --autostash origin main` restored pre-existing local Sprint 10 WIP in `extensions/nexode-vscode/package.json` and `extensions/nexode-vscode/tsconfig.json`; those edits were not created or validated in this session and remain uncommitted
 
 ### Recommended first actions tomorrow
 
