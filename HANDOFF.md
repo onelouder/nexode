@@ -59,7 +59,7 @@ Sprint 9 begins the VS Code Extension milestone (M3b). This is the first sprint 
 
 ## Sprint 9 Prompt
 
-`.agents/prompts/sprint-9-codex.md` (to be written by Codex or pc)
+`.agents/prompts/sprint-9-codex.md`
 
 ## Read First
 
