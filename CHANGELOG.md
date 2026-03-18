@@ -17,3 +17,4 @@
 - [2026-03-15] [gpt] Completed Sprint 6: fixed TUI gap recovery and timezone handling, fixed Review resume and immediate merge draining, added daemon→TUI gRPC integration coverage, and cleaned up CLI/docs polish
 - [2026-03-17] [gpt] Completed Sprint 7: hardened TUI reconnect behavior, command history/completion/status UX, help overlay, demo wait-for-DONE flow, and LoopDetected label parsing
 - [2026-03-17] [gpt] Completed Sprint 8: hardened observer slot/cooldown/path handling, added proto finding_kind support, rejected empty TOKENS telemetry, documented Claude permission flags, declared Rust 1.85 MSRV, and added daemon restart/reconnect integration coverage
+- [2026-03-18] [gpt] Added Sprint 9 `extensions/nexode-vscode`: VS Code extension scaffold, gRPC daemon client with reconnect, native project→slot TreeView, slot command palette actions, and connection/metrics status bar
