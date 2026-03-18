@@ -185,6 +185,43 @@
   - [ ] Embedding-based context compilation
   - [ ] Adaptive context budgeting per agent
 
+### M6: Quality Governance — Strict Score Engine ⏳
+- **Target:** TBD (post-Phase 4 — depends on Tree-sitter from M5)
+- **Status:** Feature Request
+- **Motivation:** At 15+ parallel agents (OpenClaw-scale constellation), quality drift becomes the dominant failure mode. Agents optimize for task completion, not architectural integrity. The "Strict Score" methodology (desloppify v0.9.10, Peter O'Malley) provides a deterministic, non-gameable quality metric that agents cannot bypass.
+- **Deliverables:**
+  - [ ] **Strict Score Engine** in `nexode-daemon` (Layer 0): Scan-Plan-Resolve loop
+    - Mechanical scan: Tree-sitter linting, type safety, cyclomatic complexity bounds
+    - Subjective review: spawn "Adversarial Reviewer" agent per slot for naming/abstraction taste-tests
+    - Normalized 0-100 Strict Score per project and per agent contribution
+  - [ ] **Score Gate** in merge queue (`engine/merge.rs`): block merge if delta score < 0
+    - Pre-merge: compute score on worktree branch vs target branch
+    - Reject merge if `branch_score < main_score - threshold`
+    - Emit `ScoreGateRejected` event with diff analysis
+  - [ ] **Resolve & Attest workflow**: agents must justify changes against scoring logic
+    - New task status: `TASK_STATUS_ATTESTING` between REVIEW and MERGE_QUEUE
+    - Agent produces structured attestation (which rules tripped, why delta is justified)
+    - Operator can override via `ForceAttest` command
+  - [ ] **Proto extensions** (`hypervisor.proto`):
+    - `project_strict_score` field on `Project` message
+    - `contribution_score` field on `AgentSlot` message
+    - `ScoreGateRejected` event type in `HypervisorEvent`
+    - `StrictScoreUpdated` event type for real-time score streaming
+  - [ ] **VS Code Status Bar** (`status-bar.ts`): display `project_strict_score` next to cost
+  - [ ] **Fleet View / Synapse Grid**: per-agent `contribution_score` column in agent cards
+  - [ ] **TUI integration**: score column in slot detail pane
+- **Architecture integration map:**
+  - Layer 0 (Daemon): New `scoring/` module in `nexode-daemon`. Consumes Tree-sitter AST from Phase 4 Step 1. Runs as a fourth observer loop alongside heartbeat/budget/semantic loops.
+  - Merge queue: `engine/merge.rs` gains a `pre_merge_score_check()` gate between MERGE_QUEUE admission and actual merge execution.
+  - Proto: Extend `Project`, `AgentSlot`, `HypervisorEvent` (backward-compatible field additions).
+  - Layer 3 (VS Code): `status-bar.ts` subscribes to `StrictScoreUpdated`. Synapse Grid cards show contribution scores. Minimal new code — mostly consuming new proto fields through existing `StateCache`.
+  - TUI: `ui.rs` slot detail adds score rendering. Same proto consumption path.
+- **Dependencies:** M5 (Phase 4 Tree-sitter integration) must land first. The mechanical scan reuses the AST infrastructure. The adversarial reviewer agent requires the AgentHarness trait (Sprint 1) to spawn review sub-agents.
+- **Open questions:**
+  - Subjective reviewer model selection: use the same agent CLI as the coding agent, or a dedicated lighter model?
+  - Score threshold tuning: configurable per-project in `session.yaml` or global?
+  - Latency budget: the score computation must not block the merge queue hot path. Async scoring with cached results?
+
 ## Backlog
 
 > Unscheduled ideas and future work. Prioritize by moving into a milestone.
@@ -204,3 +241,7 @@
 - [ ] Pre-merge semantic conflict detection (R-009 — AST signature comparison)
 - [ ] Harness version pinning / self-test (R-010)
 - [ ] Phase 5 / Pool requirements (see `docs/spec/deferred.md`)
+- [ ] Strict Score Engine — quality governance for agent output (M6 feature request)
+- [ ] Score Gate — pre-merge quality check in merge queue (M6 feature request)
+- [ ] Adversarial Reviewer agent — subjective code taste-tests (M6 feature request)
+- [ ] Resolve & Attest workflow — `TASK_STATUS_ATTESTING` state (M6 feature request)
