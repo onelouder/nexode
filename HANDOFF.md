@@ -1,73 +1,110 @@
 ---
-agent: gpt
+agent: pc
 status: handoff
-from: gpt
-timestamp: 2026-03-17T19:50:37-07:00
-task: "Sprint 8 — Daemon Hardening + Issue Sweep"
-branch: "agent/gpt/sprint-8-daemon-hardening"
-next: pc
+from: pc
+timestamp: 2026-03-17T22:30:00-07:00
+task: "Sprint 9 — VS Code Extension Scaffold"
+branch: "main"
+next: gpt
 ---
 
-# Handoff: Sprint 8 Complete
+# Handoff: Sprint 9 Ready for Codex
 
-## What Was Done
+## What Just Happened
 
-- Part 1: Hardened `crates/nexode-daemon/src/observer.rs`
-  - `observe_output()` now ignores unknown or removed slots instead of re-creating loop state
-  - loop, stuck, budget, and uncertainty alerts now use cooldown timestamps instead of one-shot booleans
-  - `candidate_paths()` now filters obvious non-filesystem tokens such as URLs, source locations, MIME types, and `::` module paths
-- Part 2: Added proto finding classification
-  - `crates/nexode-proto/proto/hypervisor.proto` now defines `FindingKind`
-  - daemon observer events populate `LoopDetected.finding_kind`
-  - `crates/nexode-tui/src/events.rs` now prefers proto `finding_kind` labels and falls back to reason parsing for older daemon versions
-- Part 3: Fixed telemetry/doc gaps
-  - `crates/nexode-daemon/src/process.rs` rejects empty malformed `TOKENS` telemetry
-  - `docs/architecture/agent-harness.md` now documents Claude as `claude -p --verbose --output-format stream-json --permission-mode bypassPermissions`
-- Part 4: Added infrastructure cleanup
-  - all crate manifests now declare `rust-version = "1.85"`
-  - `README.md` documents the Rust 1.85+ requirement
-  - `crates/nexode-daemon/src/engine/tests.rs` now covers daemon down → failed reconnect attempt → daemon restart → fresh `GetFullState`/`SubscribeEvents`
+Sprint 8 (Daemon Hardening + Issue Sweep) was reviewed and merged to `main` via PR #20 (squash merge at `eab7705`). All exit criteria met, 114 tests pass, no regressions. Six issues closed (I-013, I-020, I-021, I-023, I-024, I-029). R-006 MSRV addressed. No new issues above Info severity.
 
-## Verification
+Sprint 8 delivered:
+- Observer hardening: unknown-slot guard, cooldown-based re-alerting, path candidate filtering
+- Proto `FindingKind` enum with daemon→TUI round-trip
+- Empty telemetry rejection for malformed `TOKENS` lines
+- Claude harness doc update (`-p`, `--permission-mode bypassPermissions`)
+- `rust-version = "1.85"` in all Cargo.toml + README
+- Daemon restart → TUI reconnect integration test
 
-Passed:
+Sprint 8 review: `docs/reviews/sprint-8-review.md`
 
-- `cargo fmt --all`
-- `cargo check --workspace`
-- `cargo clippy --workspace -- -D warnings`
-- `cargo test --workspace`
-- `cargo build -p nexode-tui`
-- `cargo build -p nexode-daemon`
+## Sprint 9 Scope
 
-Current test totals:
+Sprint 9 begins the VS Code Extension milestone (M3b). This is the first sprint that introduces a TypeScript/Node.js component. The goal is to scaffold the extension, establish the gRPC connection to the daemon, and render a minimal slot status panel.
 
-- Daemon: 73 lib + 3 bin = 76
-- Ctl: 4
-- TUI: 28 lib + 6 bin = 34
-- Total: 114
+### Part 1: Extension Scaffold
 
-## Outputs
+- Create `crates/nexode-vscode/` (or `extensions/nexode-vscode/`) directory
+- Initialize with `yo code` or manual `package.json` + `tsconfig.json`
+- Add VS Code extension manifest (`contributes.viewsContainers`, `views`)
+- Add build system (esbuild or webpack for bundling)
+- Extension activates on `nexode.*` commands
 
-- `crates/nexode-daemon/src/observer.rs`
-- `crates/nexode-daemon/src/process.rs`
-- `crates/nexode-daemon/src/engine/events.rs`
-- `crates/nexode-daemon/src/engine/tests.rs`
-- `crates/nexode-proto/proto/hypervisor.proto`
-- `crates/nexode-tui/src/events.rs`
-- `crates/nexode-ctl/src/main.rs`
-- `docs/architecture/agent-harness.md`
-- `README.md`
-- `crates/nexode-daemon/Cargo.toml`
-- `crates/nexode-proto/Cargo.toml`
-- `crates/nexode-ctl/Cargo.toml`
-- `crates/nexode-tui/Cargo.toml`
+### Part 2: gRPC Client
+
+- TypeScript gRPC client connecting to daemon at `localhost:{port}`
+- Implement `GetFullState` call to fetch initial snapshot
+- Implement `SubscribeEvents` streaming for real-time updates
+- Connection status tracking (connected/disconnected/reconnecting)
+- R-008 mitigation: consider WebSocket bridge if Extension Host IPC is a concern
+
+### Part 3: Slot Status Webview
+
+- TreeView or WebviewPanel showing project → slots hierarchy
+- Display slot ID, task status, agent ID, token count
+- Live updates from event stream
+- Color-coded status badges matching D-009 kanban spec
+
+### Part 4: Basic Command Dispatch
+
+- Command palette entries: `Nexode: Pause Slot`, `Nexode: Resume Slot`, `Nexode: Move Task`
+- Quick-pick for slot selection
+- `DispatchCommand` gRPC call with `CommandResponse` feedback
+
+## Sprint 9 Prompt
+
+`.agents/prompts/sprint-9-codex.md` (to be written by Codex or pc)
+
+## Read First
+
+- `AGENTS.md`
+- `.agents/openai.md`
+- `HANDOFF.md` (this file)
 - `PLAN_NOW.md`
-- `CHANGELOG.md`
+- `ROADMAP.md` — M3b milestone
+- `docs/spec/master-spec.md` — Phase 2 requirements
+- `crates/nexode-proto/proto/hypervisor.proto` — gRPC service definition
 
-## Next Agent
+## Context for Codex
 
-Recommended next step: `pc` review Sprint 8 and merge if approved.
+### Daemon gRPC Service
 
-Residual risk to review:
+The daemon exposes a gRPC service at `hypervisor.proto`:
+- `SubscribeEvents(SubscribeRequest) → stream HypervisorEvent` — real-time event stream
+- `DispatchCommand(OperatorCommand) → CommandResponse` — operator commands
+- `GetFullState(StateRequest) → FullStateSnapshot` — full state snapshot
 
-- The reconnect integration test verifies a failed reconnect attempt while the daemon is down and successful fresh `GetFullState`/`SubscribeEvents` after restart, but it does not drive the TUI binary's background retry loop end-to-end.
+The proto file at `crates/nexode-proto/proto/hypervisor.proto` is the source of truth. The TypeScript client should generate types from this proto file.
+
+### Existing Clients
+
+- `nexode-ctl` (Rust CLI) — `crates/nexode-ctl/src/main.rs`
+- `nexode-tui` (Rust TUI) — `crates/nexode-tui/src/`
+
+Both are useful references for how to consume the daemon API.
+
+### Key Constraint
+
+This sprint focuses on the VS Code extension. Do NOT modify daemon, TUI, or proto code. The proto is stable. If the extension needs proto changes, flag them as deferred issues.
+
+### Test Baseline
+
+- Daemon: 73 lib + 3 bin = 76 tests
+- Ctl: 4 tests
+- TUI: 28 lib + 6 bin = 34 tests
+- Total: 114 tests
+
+### Remaining Open Issues
+
+All Low severity, not blocking Sprint 9:
+- I-004: `provider_config` shallow merge
+- I-005: SQLite schema migration versioning
+- I-011: Recovery re-enqueues merge slot without worktree check
+- I-012: Token/byte conflation in `truncate_payload`
+- I-018: `parse_json_summary_telemetry` double-count risk

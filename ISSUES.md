@@ -107,14 +107,14 @@
 - **Resolved:** Sprint 3 (2026-03-15), branch `agent/gpt/sprint-3-observer-safety`
 - **Resolution:** Event sequence numbers added to `HypervisorEvent` and `FullStateSnapshot`. `BroadcastStream` now surfaces `RecvError::Lagged` as gRPC `DATA_LOSS` instead of silently filtering. `nexode-ctl watch` detects sequence gaps and refreshes via `GetFullState`. End-to-end gap recovery verified in tests.
 
-### R-006: `edition = "2024"` pins MSRV to Rust 1.85+
+### ~~R-006: `edition = "2024"` pins MSRV to Rust 1.85+~~ ADDRESSED
 
 - **Source:** Phase 0 review (2026-03-14)
 - **Module:** All crates
 - **Likelihood:** Low
 - **Impact:** Low (limits contributor compatibility)
-- **Details:** All three crates use `edition = "2024"`, which requires Rust 1.85+. This is the latest stable edition. If contributors or CI use older toolchains, they'll hit build failures.
-- **Mitigation:** Document MSRV in README.md or Cargo.toml `[package]` metadata. Intentional choice — just needs to be explicit.
+- **Details:** All four crates use `edition = "2024"`, which requires Rust 1.85+. This is the latest stable edition. If contributors or CI use older toolchains, they'll hit build failures.
+- **Addressed:** Sprint 8 (2026-03-17). All Cargo.toml files now declare `rust-version = "1.85"`. README documents `Rust 1.85+ (edition 2024)` in Requirements section.
 
 ### ~~R-007: `CommandResponse` is fire-and-forget~~ FIXED
 
@@ -173,13 +173,13 @@
 - **Details:** `max_context_tokens` from HarnessConfig is passed as a byte count to `truncate_payload`. Tokens ≠ bytes (~4 bytes/token). Currently `max_context_tokens` is always `None`, so not exercised.
 - **When:** When `max_context_tokens` is actually used.
 
-### I-013: Empty telemetry from malformed `TOKENS` lines
+### ~~I-013: Empty telemetry from malformed `TOKENS` lines~~ RESOLVED
 
 - **Source:** Sprint 1 review (2026-03-15), finding F-008
 - **Module:** `process.rs:396-414`
 - **Severity:** Low
-- **Details:** `parse_space_delimited` returns `Some(ParsedTelemetry { all None })` for lines starting with `TOKENS ` that have no valid key=value pairs. Results in WAL entries with all-zero telemetry.
-- **When:** Low urgency — only affects the legacy `TOKENS` prefix format.
+- **Resolved:** Sprint 8 (2026-03-17), branch `agent/gpt/sprint-8-daemon-hardening`
+- **Resolution:** Added `ParsedTelemetry::is_empty()` method. `parse_space_delimited` now returns `None` when no valid key=value pairs are parsed, preventing all-zero telemetry from reaching WAL/accounting.
 
 ### ~~I-014: Architecture doc CLI flags out of date~~ RESOLVED
 
@@ -229,21 +229,21 @@
 - **Resolved:** Sprint 7 (2026-03-17), branch `agent/gpt/sprint-7-tui-command-hardening`
 - **Resolution:** Poll loop with `grep -Eq` for done status, 15-iteration timeout with 1-second sleep.
 
-### I-020: `observe_output` creates slot state for unknown/removed slots
+### ~~I-020: `observe_output` creates slot state for unknown/removed slots~~ RESOLVED
 
 - **Source:** Sprint 3 review (2026-03-15), finding F-001
 - **Module:** `observer.rs:118`
 - **Severity:** Low
-- **Details:** `observe_output()` calls `self.slots.entry(slot_id).or_default()` unconditionally, creating a `SlotLoopState` even if `observe_status()` was never called for that slot. If output arrives for a slot that was already removed (e.g., due to a race between process event delivery and a status transition), the detector silently re-creates state for a dead slot.
-- **When:** Low urgency. Consider guarding with a slot-exists check when the observer is used at higher concurrency.
+- **Resolved:** Sprint 8 (2026-03-17), branch `agent/gpt/sprint-8-daemon-hardening`
+- **Resolution:** `observe_output()` now uses `self.slots.get_mut(slot_id)` and returns `None` for unknown slots. Test `observe_output_ignores_unknown_slots` validates.
 
-### I-021: Alert-only loop findings suppress re-alerting permanently
+### ~~I-021: Alert-only loop findings suppress re-alerting permanently~~ RESOLVED
 
 - **Source:** Sprint 3 review (2026-03-15), finding F-002
 - **Module:** `observer.rs:88-91`
 - **Severity:** Low
-- **Details:** Each `SlotLoopState` has `emitted_*_alert` flags. Once fired, the alert won't fire again unless the slot is reset (which only happens on pause/kill/resume). If `LoopAction::Alert` is configured (no intervention), the operator gets one alert and no follow-ups. An operator who sees an alert and doesn't act gets no second warning.
-- **When:** When `LoopAction::Alert` is the configured intervention. Consider a configurable alert cooldown.
+- **Resolved:** Sprint 8 (2026-03-17), branch `agent/gpt/sprint-8-daemon-hardening`
+- **Resolution:** One-shot `emitted_*_alert: bool` flags replaced with `Option<Instant>` cooldown timestamps. Configurable `alert_cooldown_seconds` (default 300). `should_emit_alert()` helper re-arms after cooldown. Test `loop_alert_rearms_after_cooldown` validates.
 
 ### ~~I-022: `run_observer_tick` runs blocking git-status in async context~~ RESOLVED
 
@@ -253,22 +253,22 @@
 - **Resolved:** Sprint 4 (2026-03-15), branch `agent/gpt/sprint-4-engine-hardening`
 - **Resolution:** Observer tick now uses `JoinSet::spawn_blocking` to run `has_worktree_changes()` concurrently for all working slots. Results are collected and fed to the observer after all checks complete.
 
-### I-023: `candidate_paths` may false-positive on URLs and source locations
+### ~~I-023: `candidate_paths` may false-positive on URLs and source locations~~ RESOLVED
 
 - **Source:** Sprint 3 review (2026-03-15), finding F-004
 - **Module:** `observer.rs:341-353`
 - **Severity:** Low
-- **Details:** The path candidate extraction matches any whitespace-delimited token containing `/` or `\`. This matches URLs (`https://...`), Rust source locations (`src/lib.rs:42:`), MIME types (`application/json`), etc. Most false positives are harmless because they resolve inside the worktree, but an absolute path appearing in agent log output (e.g., `/etc/passwd` in an error message) would trigger a sandbox violation.
-- **When:** Low urgency. The current behavior is conservative (false pause > false pass). Consider filtering URLs and source-location patterns.
+- **Resolved:** Sprint 8 (2026-03-17), branch `agent/gpt/sprint-8-daemon-hardening`
+- **Resolution:** `candidate_paths()` now runs tokens through `is_path_like_token`, then filters out URLs (`is_url_token`), source locations like `src/lib.rs:42:10` (`is_source_location_token`), MIME types (`is_mime_type_token`), and `::` module paths. Test `candidate_paths_filters_common_non_filesystem_tokens` validates.
 
-### I-024: `LoopDetected` proto flattens three distinct observer finding kinds
+### ~~I-024: `LoopDetected` proto flattens three distinct observer finding kinds~~ RESOLVED
 
 - **Source:** Sprint 3 review (2026-03-15), finding F-006
 - **Module:** `engine.rs:1825-1833`, `hypervisor.proto`
 - **Severity:** Low
-- **Details:** `ObserverFindingKind::LoopDetected`, `Stuck`, and `BudgetVelocity` all map to the same proto variant `observer_alert::Detail::LoopDetected`. A UI client can't switch on the finding kind without parsing the `reason` string.
-- **Partial fix:** Sprint 7 (2026-03-17) — TUI `events.rs` now parses reason strings to show `Loop Detected`, `Stuck`, and `Budget Velocity` labels. The proto-level split is still deferred.
-- **When:** Consider adding a `finding_kind` enum to the proto message when building the VS Code extension.
+- **Partial fix:** Sprint 7 (2026-03-17) — TUI reason string parsing as interim.
+- **Resolved:** Sprint 8 (2026-03-17), branch `agent/gpt/sprint-8-daemon-hardening`
+- **Resolution:** Added `FindingKind` enum to `hypervisor.proto` with `LoopDetected`, `Stuck`, `BudgetVelocity` variants. Daemon `finding_kind_to_proto()` maps observer findings to proto enum. TUI `loop_detected_label_from_proto()` prefers proto enum with fallback to reason parsing for older daemon versions.
 
 ### ~~I-025: `Review → Paused` creates un-resumable state via `ResumeAgent`/`ResumeSlot`~~ RESOLVED
 
@@ -301,6 +301,14 @@
 - **Severity:** Low
 - **Resolved:** Sprint 6 (2026-03-15), branch `agent/gpt/sprint-6-integration-polish`
 - **Resolution:** The TUI now captures `UtcOffset::current_local_offset()` in plain `main()` before the Tokio runtime starts, stores it in `AppState`, and passes it into event timestamp formatting. The log header explicitly labels UTC fallback mode.
+
+### ~~I-029: `agent-harness.md` Claude CLI flags out of date~~ RESOLVED
+
+- **Source:** Sprint 8 prompt (2026-03-17)
+- **Module:** `docs/architecture/agent-harness.md`
+- **Severity:** Low
+- **Resolved:** Sprint 8 (2026-03-17), branch `agent/gpt/sprint-8-daemon-hardening`
+- **Resolution:** Updated Claude command from `--print` to `-p` and added `--permission-mode bypassPermissions` to match the real CLI invocation.
 
 ---
 

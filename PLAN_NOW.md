@@ -1,74 +1,63 @@
-# PLAN_NOW — Current Sprint
-
-> What's happening right now. Updated at each handoff.
+---
+updated: 2026-03-17
+author: pc
+status: planning
+---
 
 ## Current Sprint
 
-- **Sprint:** 8
-- **Goal:** Sprint 8 — Daemon Hardening + Issue Sweep
-- **Deadline:** 2026-04-26
+- **Goal:** Sprint 9 — VS Code Extension Scaffold
+- **Deadline:** 2026-05-03
 - **Active Agent:** gpt (Codex)
-- **Current Branch:** `agent/gpt/sprint-8-daemon-hardening`
-- **Previous sprint:** Sprint 7 — TUI Command Hardening (complete, merged to `main` via PR #19 at `a93e9af`)
+- **Current Branch:** `agent/gpt/sprint-9-vscode-scaffold` (to be created)
+- **Previous sprint:** Sprint 8 — Daemon Hardening + Issue Sweep (complete, merged to `main` via PR #20 at `eab7705`)
 
 ## Tasks
 
-### Part 1: Observer Hardening
+### Part 1: Extension Scaffold
 
-- [x] I-020: Guard `observe_output` against unknown/removed slots
-- [x] I-021: Configurable alert cooldown for repeated observer findings
-- [x] I-023: Filter URLs and source-location patterns from sandbox `candidate_paths`
-- [x] Tests: slot-exists guard, alert cooldown behavior, URL/source-loc filtering
+- [ ] Create `extensions/nexode-vscode/` directory with `package.json`, `tsconfig.json`
+- [ ] VS Code extension manifest: activation events, contributes.viewsContainers/views
+- [ ] Build system (esbuild bundling for production, ts-node or esbuild for dev)
+- [ ] Extension entry point (`extension.ts`) with activate/deactivate
+- [ ] `.vscodeignore` and packaging config
 
-### Part 2: Proto Cleanup
+### Part 2: gRPC Client
 
-- [x] I-024: Add `finding_kind` enum to `LoopDetected` proto message
-- [x] Update daemon observer event mapping to emit the new enum field
-- [x] Update TUI `events.rs` to use proto enum instead of string parsing
-- [x] Tests: proto mapping and TUI event formatting with the new field
+- [ ] Generate TypeScript types from `hypervisor.proto` (grpc-tools or buf)
+- [ ] `DaemonClient` class: connect, disconnect, connection state tracking
+- [ ] `GetFullState` — fetch initial snapshot on activation
+- [ ] `SubscribeEvents` — streaming event consumer with reconnect
+- [ ] Configuration: daemon host/port from VS Code settings
 
-### Part 3: Harness & Telemetry Fixes
+### Part 3: Slot Status Panel
 
-- [x] I-013: Reject empty `ParsedTelemetry` from malformed `TOKENS` lines
-- [x] I-029: Update Claude harness doc with `--permission-mode` flags
-- [x] Tests: malformed TOKENS line rejection
+- [ ] TreeView provider showing project → slots hierarchy
+- [ ] Slot tree items: ID, status badge, agent ID, token count
+- [ ] Live refresh from event stream
+- [ ] Status colors matching D-009 kanban spec
 
-### Part 4: Infrastructure
+### Part 4: Basic Command Dispatch
 
-- [x] R-006: Add `rust-version` MSRV to all Cargo.toml files
-- [x] R-006: Document MSRV in README.md
-- [x] Integration test: daemon restart → TUI reconnect verification
+- [ ] Command palette: `Nexode: Pause Slot`, `Nexode: Resume Slot`, `Nexode: Move Task`
+- [ ] Quick-pick slot selector
+- [ ] `DispatchCommand` call with `CommandResponse` feedback (info/error messages)
+- [ ] Status bar item showing connection state
 
 ## Blocked
 
-- (none)
+- Nothing
 
 ## Done This Sprint
 
-- Guarded observer output against unknown/removed slots, added cooldown-based re-alerting, and filtered URLs, source locations, MIME types, and module-like tokens from sandbox candidate path extraction
-- Added proto `FindingKind` enum and `LoopDetected.finding_kind`; daemon observer events now populate it and the TUI prefers it with a fallback to Sprint 7 reason parsing
-- Rejected empty malformed `TOKENS` telemetry payloads before they reach accounting/WAL updates
-- Updated the Claude harness architecture doc to match the real CLI invocation, including `-p` and `--permission-mode bypassPermissions`
-- Added `rust-version = "1.85"` to all crate manifests and documented Rust 1.85+ in `README.md`
-- Added daemon restart/reconnect integration coverage and expanded observer/proto regression tests
-- Verification passed: `cargo fmt --all`, `cargo check --workspace`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, `cargo build -p nexode-tui`, `cargo build -p nexode-daemon`
+- (Sprint 9 not yet started)
 
-## Done Previously (Sprint 7)
+## Done Previously (Sprint 8)
 
-- Added TUI reconnect with exponential backoff, stale-data rendering, disconnect/reconnect event log entries, command blocking while disconnected
-- Added command history, slot-id tab completion, status bar feedback with auto-clear
-- Added `?` help overlay modal and key filtering
-- Fixed `scripts/demo.sh` to wait for DONE after merge queue dispatch
-- Improved LoopDetected event labels to distinguish loop, stuck, and budget-velocity reasons
-- 108 tests pass
-
-## Next Up
-
-- Sprint 8 review / merge
-- After Sprint 8: VS Code Extension (M3b) — requires PC architecture docs first
-
-## Notes
-
-- Sprint 8 is daemon-focused. TUI is production-ready and should only change for I-024 proto integration.
-- The proto change (I-024) is the riskiest item — it modifies the wire format. Backward compatibility: new enum field defaults to 0 (unspecified), so older TUI versions still work.
-- Alert cooldown (I-021) needs a new config field in `observer` settings. Use `alert_cooldown_seconds: u64` with a default of 300 (5 minutes).
+- Observer hardening: unknown-slot guard, cooldown-based re-alerting, path candidate filtering (I-020, I-021, I-023)
+- Proto `FindingKind` enum with daemon→TUI round-trip (I-024)
+- Empty telemetry rejection (I-013), Claude harness doc update (I-029)
+- MSRV declaration and documentation (R-006)
+- Daemon restart → TUI reconnect integration test
+- Test count: 108 → 114 (+6)
+- Review: `docs/reviews/sprint-8-review.md` — APPROVED

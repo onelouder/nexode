@@ -124,20 +124,21 @@
   - [x] Fix I-019: demo.sh waits for DONE
   - [x] Improve I-024: parse LoopDetected reason strings
 
-### M3a-cleanup: Sprint 8 — Daemon Hardening + Issue Sweep ⏳
+### M3a-cleanup: Sprint 8 — Daemon Hardening + Issue Sweep ✅
 - **Target:** 2026-04-26
-- **Status:** Ready for Codex
+- **Status:** Complete (merged 2026-03-17, PR #20, commit `eab7705`)
 - **Agent:** gpt (Codex)
 - **Prompt:** `.agents/prompts/sprint-8-codex.md`
+- **Review:** `docs/reviews/sprint-8-review.md`
 - **Deliverables:**
-  - [ ] I-020: Guard `observe_output` against unknown/removed slots
-  - [ ] I-021: Configurable alert cooldown for repeated observer findings
-  - [ ] I-023: Filter URLs and source-location patterns from sandbox candidate paths
-  - [ ] I-024: Add `finding_kind` enum to `LoopDetected` proto message
-  - [ ] I-029: Update Claude harness doc with `--permission-mode` flags
-  - [ ] I-013: Reject malformed `TOKENS` lines with no valid key=value pairs
-  - [ ] Add MSRV documentation (R-006) to Cargo.toml and README
-  - [ ] Daemon integration test: TUI reconnect after daemon restart
+  - [x] I-020: Guard `observe_output` against unknown/removed slots
+  - [x] I-021: Configurable alert cooldown for repeated observer findings
+  - [x] I-023: Filter URLs and source-location patterns from sandbox candidate paths
+  - [x] I-024: Add `finding_kind` enum to `LoopDetected` proto message
+  - [x] I-029: Update Claude harness doc with `--permission-mode` flags
+  - [x] I-013: Reject malformed `TOKENS` lines with no valid key=value pairs
+  - [x] Add MSRV documentation (R-006) to Cargo.toml and README
+  - [x] Daemon integration test: TUI reconnect after daemon restart
 
 ### M3b: Phase 2 Continuation — VS Code Extension ⏳
 - **Target:** TBD
