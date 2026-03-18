@@ -1,6 +1,7 @@
 use nexode_proto::observer_alert;
 use nexode_proto::{
-    AgentMode, AgentState, HypervisorEvent, ObserverIntervention, TaskStatus, hypervisor_event,
+    AgentMode, AgentState, FindingKind, HypervisorEvent, ObserverIntervention, TaskStatus,
+    hypervisor_event,
 };
 use time::{OffsetDateTime, UtcOffset};
 
@@ -63,9 +64,12 @@ pub fn format_event_message(event: &HypervisorEvent) -> String {
             payload.slot_id, payload.old_agent_id, payload.new_agent_id, payload.reason
         ),
         Some(hypervisor_event::Payload::ObserverAlert(payload)) => match payload.detail.as_ref() {
-            Some(observer_alert::Detail::LoopDetected(detail)) => {
-                format_loop_detected_alert(&payload.slot_id, &detail.reason, detail.intervention)
-            }
+            Some(observer_alert::Detail::LoopDetected(detail)) => format_loop_detected_alert(
+                &payload.slot_id,
+                detail.finding_kind,
+                &detail.reason,
+                detail.intervention,
+            ),
             Some(observer_alert::Detail::SandboxViolation(detail)) => format!(
                 "ObserverAlert {}: sandbox {} ({})",
                 payload.slot_id, detail.reason, detail.path
@@ -174,8 +178,15 @@ fn display_slot(slot_id: &str) -> &str {
     if slot_id.is_empty() { "-" } else { slot_id }
 }
 
-fn format_loop_detected_alert(slot_id: &str, reason: &str, intervention: i32) -> String {
-    let summary = if let Some(label) = loop_detected_label(reason) {
+fn format_loop_detected_alert(
+    slot_id: &str,
+    finding_kind: i32,
+    reason: &str,
+    intervention: i32,
+) -> String {
+    let summary = if let Some(label) =
+        loop_detected_label_from_proto(finding_kind).or_else(|| loop_detected_label(reason))
+    {
         format!("{label} {reason}")
     } else {
         reason.to_string()
@@ -186,6 +197,15 @@ fn format_loop_detected_alert(slot_id: &str, reason: &str, intervention: i32) ->
         summary,
         format_observer_intervention(intervention)
     )
+}
+
+fn loop_detected_label_from_proto(raw: i32) -> Option<&'static str> {
+    match FindingKind::try_from(raw).unwrap_or(FindingKind::Unspecified) {
+        FindingKind::LoopDetected => Some("Loop Detected"),
+        FindingKind::Stuck => Some("Stuck"),
+        FindingKind::BudgetVelocity => Some("Budget Velocity"),
+        FindingKind::Unspecified => None,
+    }
 }
 
 fn loop_detected_label(reason: &str) -> Option<&'static str> {
@@ -292,6 +312,7 @@ mod tests {
                 detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
                     reason: "budget velocity exceeded".to_string(),
                     intervention: ObserverIntervention::Alert as i32,
+                    finding_kind: FindingKind::BudgetVelocity as i32,
                 })),
             })),
         };
@@ -316,6 +337,7 @@ mod tests {
                 detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
                     reason: "timeout waiting for worktree changes".to_string(),
                     intervention: ObserverIntervention::Pause as i32,
+                    finding_kind: FindingKind::Unspecified as i32,
                 })),
             })),
         };
@@ -338,8 +360,9 @@ mod tests {
                 slot_id: "slot-a".to_string(),
                 agent_id: "agent-1".to_string(),
                 detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
-                    reason: "observed repeated output lines".to_string(),
+                    reason: "timeout waiting for worktree changes".to_string(),
                     intervention: ObserverIntervention::Alert as i32,
+                    finding_kind: FindingKind::LoopDetected as i32,
                 })),
             })),
         };

@@ -126,6 +126,7 @@ pub(super) fn observer_payload(finding: &ObserverFinding) -> hypervisor_event::P
                 reason: finding.reason.clone(),
                 intervention: loop_action_to_proto(finding.action.unwrap_or(LoopAction::Alert))
                     as i32,
+                finding_kind: finding_kind_to_proto(finding.kind) as i32,
             })
         }
         ObserverFindingKind::SandboxViolation => {
@@ -148,6 +149,17 @@ pub(super) fn observer_payload(finding: &ObserverFinding) -> hypervisor_event::P
     })
 }
 
+fn finding_kind_to_proto(kind: ObserverFindingKind) -> nexode_proto::FindingKind {
+    match kind {
+        ObserverFindingKind::LoopDetected => nexode_proto::FindingKind::LoopDetected,
+        ObserverFindingKind::Stuck => nexode_proto::FindingKind::Stuck,
+        ObserverFindingKind::BudgetVelocity => nexode_proto::FindingKind::BudgetVelocity,
+        ObserverFindingKind::SandboxViolation | ObserverFindingKind::UncertaintySignal => {
+            nexode_proto::FindingKind::Unspecified
+        }
+    }
+}
+
 fn loop_action_to_proto(action: LoopAction) -> ObserverIntervention {
     match action {
         LoopAction::Alert => ObserverIntervention::Alert,
@@ -167,5 +179,42 @@ pub(super) fn format_task_status(status: TaskStatus) -> &'static str {
         TaskStatus::Paused => "paused",
         TaskStatus::Archived => "archived",
         TaskStatus::Unspecified => "unspecified",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loop_style_observer_findings_map_to_proto_finding_kind() {
+        for (kind, expected) in [
+            (
+                ObserverFindingKind::LoopDetected,
+                nexode_proto::FindingKind::LoopDetected,
+            ),
+            (ObserverFindingKind::Stuck, nexode_proto::FindingKind::Stuck),
+            (
+                ObserverFindingKind::BudgetVelocity,
+                nexode_proto::FindingKind::BudgetVelocity,
+            ),
+        ] {
+            let payload = observer_payload(&ObserverFinding {
+                slot_id: "slot-a".to_string(),
+                agent_id: Some("agent-a".to_string()),
+                kind,
+                reason: "reason".to_string(),
+                path: None,
+                action: Some(LoopAction::Alert),
+            });
+
+            let hypervisor_event::Payload::ObserverAlert(alert) = payload else {
+                panic!("expected observer alert payload");
+            };
+            let Some(observer_alert::Detail::LoopDetected(detail)) = alert.detail else {
+                panic!("expected loop detected detail");
+            };
+            assert_eq!(detail.finding_kind, expected as i32);
+        }
     }
 }

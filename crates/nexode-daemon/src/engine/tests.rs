@@ -446,6 +446,10 @@ projects:
         observer_alert::Detail::LoopDetected(detail) => {
             assert_eq!(alert.slot_id, "slot-a");
             assert_eq!(detail.intervention, ObserverIntervention::Kill as i32);
+            assert_eq!(
+                detail.finding_kind,
+                nexode_proto::FindingKind::LoopDetected as i32
+            );
         }
         other => panic!("expected loop alert, got {other:?}"),
     }
@@ -781,6 +785,111 @@ projects:
             .map(|task| task.status),
         Some(TaskStatus::Paused as i32)
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[serial_test::serial]
+async fn daemon_restart_allows_tui_clients_to_reconnect() {
+    let fixture = DaemonFixture::new();
+    let session_path = fixture.write_session(
+        r#"
+version: "2.0"
+session:
+  name: "tui-reconnect"
+defaults:
+  model: "mock"
+  mode: "plan"
+  timeout_minutes: 1
+projects:
+  - id: "project-1"
+    repo: "./repo"
+    display_name: "Project One"
+    slots:
+      - id: "slot-a"
+        harness: "mock"
+        task: "Implement slot a"
+"#,
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let config = fixture.config(session_path.clone());
+    let server = tokio::spawn(async move {
+        run_daemon_with_listener(config, listener, async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    let mut snapshot_client: HypervisorClient<tonic::transport::Channel> =
+        fixture.client(addr).await;
+    let snapshot = wait_for_status(&mut snapshot_client, "slot-a", TaskStatus::Review).await;
+    let mut app_state = AppState::default();
+    app_state.apply_snapshot(snapshot);
+    shutdown_tx.send(()).expect("signal shutdown");
+    drop(snapshot_client);
+
+    timeout(Duration::from_secs(5), server)
+        .await
+        .expect("daemon should shut down before timeout")
+        .expect("join daemon task")
+        .expect("daemon exits cleanly");
+
+    let reconnect_attempt = timeout(
+        Duration::from_secs(5),
+        HypervisorClient::connect(format!("http://{addr}")),
+    )
+    .await
+    .expect("connect attempt should resolve while daemon is down");
+    assert!(
+        reconnect_attempt.is_err(),
+        "expected reconnect attempt to fail while daemon is down"
+    );
+
+    let listener = TcpListener::bind(addr).await.expect("rebind listener");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let config = fixture.config(session_path);
+    let server = tokio::spawn(async move {
+        run_daemon_with_listener(config, listener, async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    let mut reconnect_snapshot_client: HypervisorClient<tonic::transport::Channel> =
+        fixture.client(addr).await;
+    let snapshot = reconnect_snapshot_client
+        .get_full_state(tonic::Request::new(nexode_proto::StateRequest {}))
+        .await
+        .expect("get full state after restart")
+        .into_inner();
+    assert!(snapshot.task_dag.iter().any(|task| task.id == "slot-a"));
+    app_state.apply_snapshot(snapshot);
+
+    let mut reconnect_stream_client: HypervisorClient<tonic::transport::Channel> =
+        fixture.client(addr).await;
+    let reconnect_stream = reconnect_stream_client
+        .subscribe_events(tonic::Request::new(nexode_proto::SubscribeRequest {
+            client_version: "tui-reconnect-test".to_string(),
+        }))
+        .await
+        .expect("subscribe reconnect events")
+        .into_inner();
+
+    drop(reconnect_stream);
+    drop(reconnect_stream_client);
+    drop(reconnect_snapshot_client);
+    shutdown_tx.send(()).expect("signal shutdown");
+    timeout(Duration::from_secs(5), server)
+        .await
+        .expect("daemon should shut down before timeout")
+        .expect("join daemon task")
+        .expect("daemon exits cleanly");
+
+    assert!(app_state.task_dag.iter().any(|task| task.id == "slot-a"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

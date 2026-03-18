@@ -412,6 +412,10 @@ impl ParsedTelemetry {
         }
         None
     }
+
+    fn is_empty(&self) -> bool {
+        self.tokens_in.is_none() && self.tokens_out.is_none() && self.cost_usd.is_none()
+    }
 }
 
 fn parse_space_delimited(line: &str) -> Option<ParsedTelemetry> {
@@ -420,30 +424,20 @@ fn parse_space_delimited(line: &str) -> Option<ParsedTelemetry> {
         tokens_out: None,
         cost_usd: None,
     };
-    let mut found = false;
 
     for part in line.split_whitespace() {
         let Some((key, value)) = part.split_once('=') else {
             continue;
         };
         match key {
-            "in" => {
-                telemetry.tokens_in = value.parse().ok();
-                found = true;
-            }
-            "out" => {
-                telemetry.tokens_out = value.parse().ok();
-                found = true;
-            }
-            "cost" => {
-                telemetry.cost_usd = value.parse().ok();
-                found = true;
-            }
+            "in" => telemetry.tokens_in = value.parse().ok(),
+            "out" => telemetry.tokens_out = value.parse().ok(),
+            "cost" => telemetry.cost_usd = value.parse().ok(),
             _ => {}
         }
     }
 
-    found.then_some(telemetry)
+    (!telemetry.is_empty()).then_some(telemetry)
 }
 
 fn parse_csv(line: &str) -> Option<ParsedTelemetry> {
@@ -929,5 +923,19 @@ exit 1
         fn detect_completion(&self, line: &str) -> bool {
             line.trim() == self.completion_line
         }
+    }
+
+    #[test]
+    fn rejects_empty_space_delimited_telemetry() {
+        assert_eq!(ParsedTelemetry::parse("TOKENS garbage"), None);
+        assert_eq!(ParsedTelemetry::parse("TOKENS in=abc"), None);
+        assert_eq!(
+            ParsedTelemetry::parse("TOKENS in=100 out=50"),
+            Some(ParsedTelemetry {
+                tokens_in: Some(100),
+                tokens_out: Some(50),
+                cost_usd: None,
+            })
+        );
     }
 }

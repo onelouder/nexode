@@ -1,89 +1,73 @@
 ---
-agent: pc
+agent: gpt
 status: handoff
-from: pc
-timestamp: 2026-03-17T19:30:00-07:00
+from: gpt
+timestamp: 2026-03-17T19:50:37-07:00
 task: "Sprint 8 — Daemon Hardening + Issue Sweep"
-branch: "main"
-next: gpt
+branch: "agent/gpt/sprint-8-daemon-hardening"
+next: pc
 ---
 
-# Handoff: Sprint 8 Ready for Codex
+# Handoff: Sprint 8 Complete
 
-## What Just Happened
+## What Was Done
 
-Sprint 7 (TUI Command Hardening) was reviewed and merged to `main` via PR #19 (squash merge at `a93e9af`). All exit criteria met, 108 tests pass, no regressions. Two issues closed (I-019, I-024 partial). No new issues above Info severity.
+- Part 1: Hardened `crates/nexode-daemon/src/observer.rs`
+  - `observe_output()` now ignores unknown or removed slots instead of re-creating loop state
+  - loop, stuck, budget, and uncertainty alerts now use cooldown timestamps instead of one-shot booleans
+  - `candidate_paths()` now filters obvious non-filesystem tokens such as URLs, source locations, MIME types, and `::` module paths
+- Part 2: Added proto finding classification
+  - `crates/nexode-proto/proto/hypervisor.proto` now defines `FindingKind`
+  - daemon observer events populate `LoopDetected.finding_kind`
+  - `crates/nexode-tui/src/events.rs` now prefers proto `finding_kind` labels and falls back to reason parsing for older daemon versions
+- Part 3: Fixed telemetry/doc gaps
+  - `crates/nexode-daemon/src/process.rs` rejects empty malformed `TOKENS` telemetry
+  - `docs/architecture/agent-harness.md` now documents Claude as `claude -p --verbose --output-format stream-json --permission-mode bypassPermissions`
+- Part 4: Added infrastructure cleanup
+  - all crate manifests now declare `rust-version = "1.85"`
+  - `README.md` documents the Rust 1.85+ requirement
+  - `crates/nexode-daemon/src/engine/tests.rs` now covers daemon down → failed reconnect attempt → daemon restart → fresh `GetFullState`/`SubscribeEvents`
 
-Sprint 7 delivered:
-- Auto-reconnect on gRPC disconnect with exponential backoff (1s→30s)
-- ConnectionStatus tracking, header bar indicator, command blocking while disconnected
-- Command history (↑/↓, capped at 50)
-- Status bar feedback with 5-second auto-clear
-- Slot ID tab-completion for `:move` and `:resume-slot`
-- Help overlay (`?` toggle)
-- I-019: demo.sh waits for DONE after MoveTask
-- I-024 (partial): LoopDetected reason string parsing
+## Verification
 
-Sprint 7 review: `docs/reviews/sprint-7-review.md`
+Passed:
 
-## Sprint 8 Scope
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `cargo build -p nexode-tui`
+- `cargo build -p nexode-daemon`
 
-Sprint 8 clears the accumulated low-severity issue debt in the daemon and observer crates before moving to the VS Code Extension (M3b). This is a daemon-focused sprint — the TUI is production-ready and should not be modified.
+Current test totals:
 
-### Part 1: Observer Hardening
+- Daemon: 73 lib + 3 bin = 76
+- Ctl: 4
+- TUI: 28 lib + 6 bin = 34
+- Total: 114
 
-- I-020: Guard `observe_output` against unknown/removed slots
-- I-021: Configurable alert cooldown for repeated observer findings
-- I-023: Filter URLs, source-location patterns, and MIME types from sandbox `candidate_paths`
+## Outputs
 
-### Part 2: Proto Cleanup
-
-- I-024: Add `finding_kind` enum to `LoopDetected` proto message (eliminate string parsing in clients)
-
-### Part 3: Harness & Telemetry Fixes
-
-- I-013: Reject empty `ParsedTelemetry` from malformed `TOKENS` lines
-- I-029: Update `docs/architecture/agent-harness.md` with Claude `--permission-mode` flags
-
-### Part 4: Infrastructure
-
-- R-006: Add `rust-version` (MSRV) field to all Cargo.toml files and document in README
-- Add daemon integration test: start daemon, start TUI client, kill daemon, verify TUI reconnects after daemon restart
-
-## Sprint 8 Prompt
-
-`.agents/prompts/sprint-8-codex.md`
-
-## Read First
-
-- `AGENTS.md`
-- `.agents/openai.md`
-- `HANDOFF.md` (this file)
+- `crates/nexode-daemon/src/observer.rs`
+- `crates/nexode-daemon/src/process.rs`
+- `crates/nexode-daemon/src/engine/events.rs`
+- `crates/nexode-daemon/src/engine/tests.rs`
+- `crates/nexode-proto/proto/hypervisor.proto`
+- `crates/nexode-tui/src/events.rs`
+- `crates/nexode-ctl/src/main.rs`
+- `docs/architecture/agent-harness.md`
+- `README.md`
+- `crates/nexode-daemon/Cargo.toml`
+- `crates/nexode-proto/Cargo.toml`
+- `crates/nexode-ctl/Cargo.toml`
+- `crates/nexode-tui/Cargo.toml`
 - `PLAN_NOW.md`
-- `.agents/prompts/sprint-8-codex.md` — full sprint instructions
-- `ISSUES.md` — focus on I-013, I-020, I-021, I-023, I-024, I-029
+- `CHANGELOG.md`
 
-## Context for Codex
+## Next Agent
 
-### Daemon Source
+Recommended next step: `pc` review Sprint 8 and merge if approved.
 
-The daemon crate at `crates/nexode-daemon/src/` has these key files:
-- `engine/` — Engine module (decomposed in Sprint 4): `mod.rs`, `commands.rs`, `merge.rs`, `observer_tick.rs`, `state.rs`, `snapshot.rs`, `events.rs`, `tick.rs`, `test_support.rs`, `tests.rs`
-- `observer.rs` — `LoopDetector`, `SandboxGuard`, observer findings (I-020, I-021, I-023 changes go here)
-- `process.rs` — Agent process manager, telemetry parsing (I-013 changes go here)
-- `harness.rs` — `AgentHarness` trait, `ClaudeCodeHarness`, `CodexCliHarness`
+Residual risk to review:
 
-### Proto Source
-
-- `crates/nexode-proto/proto/hypervisor.proto` — I-024 proto changes go here
-
-### Test Baseline
-
-- Daemon: 67 lib + 3 bin = 70 tests
-- Ctl: 4 tests
-- TUI: 28 lib + 6 bin = 34 tests
-- Total: 108 tests
-
-### Key Constraint
-
-This sprint focuses on daemon + proto. TUI changes should be limited to consuming the new `finding_kind` proto field (I-024). Do NOT modify TUI reconnect, command UX, or help overlay code.
+- The reconnect integration test verifies a failed reconnect attempt while the daemon is down and successful fresh `GetFullState`/`SubscribeEvents` after restart, but it does not drive the TUI binary's background retry loop end-to-end.

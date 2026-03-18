@@ -84,7 +84,7 @@ Drives the `claude` CLI in non-interactive (headless) mode.
 
 - `build_command`:
   1. Writes a `CLAUDE.md` file into the worktree root containing the assembled context (task description, include/exclude patterns, recent diff summary, project README excerpt).
-  2. Returns command: `claude --print --verbose --output-format stream-json --model {model} "{task}"` with `cwd` set to the worktree.
+  2. Returns command: `claude -p --verbose --output-format stream-json --permission-mode bypassPermissions --model {model} "{task}"` with `cwd` set to the worktree.
   3. Sets `ANTHROPIC_API_KEY` from `provider_config` if present.
 - `parse_telemetry`: Parses Claude Code's final JSON summary line for token/cost data.
 - `detect_completion`: Returns true when Claude emits its JSON completion record (`{"type":"result", ...}`).

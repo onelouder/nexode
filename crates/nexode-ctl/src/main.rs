@@ -521,6 +521,7 @@ mod tests {
                 detail: Some(observer_alert::Detail::LoopDetected(LoopDetected {
                     reason: "observed 3 identical output lines".to_string(),
                     intervention: ObserverIntervention::Pause as i32,
+                    finding_kind: 0,
                 })),
             })),
         });

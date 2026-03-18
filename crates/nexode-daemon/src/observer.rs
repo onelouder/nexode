@@ -17,6 +17,7 @@ pub struct LoopDetectionConfig {
     pub max_identical_outputs: u32,
     pub stuck_timeout: Duration,
     pub budget_velocity_threshold: f64,
+    pub alert_cooldown_seconds: u64,
     pub on_loop: LoopAction,
 }
 
@@ -27,6 +28,7 @@ impl Default for LoopDetectionConfig {
             max_identical_outputs: 3,
             stuck_timeout: Duration::from_secs(300),
             budget_velocity_threshold: 0.5,
+            alert_cooldown_seconds: 300,
             on_loop: LoopAction::Alert,
         }
     }
@@ -69,6 +71,7 @@ pub struct ObserverFinding {
 #[derive(Debug)]
 pub struct LoopDetector {
     config: LoopDetectionConfig,
+    alert_cooldown: Duration,
     slots: BTreeMap<String, SlotLoopState>,
 }
 
@@ -85,15 +88,16 @@ struct SlotLoopState {
     last_output_signature: Option<String>,
     identical_output_count: u32,
     working_since: Option<Instant>,
-    emitted_loop_alert: bool,
-    emitted_stuck_alert: bool,
-    emitted_budget_alert: bool,
-    emitted_uncertainty_alert: bool,
+    last_loop_alert: Option<Instant>,
+    last_stuck_alert: Option<Instant>,
+    last_budget_alert: Option<Instant>,
+    last_uncertainty_alert: Option<Instant>,
 }
 
 impl LoopDetector {
     pub fn new(config: LoopDetectionConfig) -> Self {
         Self {
+            alert_cooldown: Duration::from_secs(config.alert_cooldown_seconds),
             config,
             slots: BTreeMap::new(),
         }
@@ -115,7 +119,7 @@ impl LoopDetector {
         agent_id: Option<&str>,
         line: &str,
     ) -> Option<ObserverFinding> {
-        let state = self.slots.entry(slot_id.to_string()).or_default();
+        let state = self.slots.get_mut(slot_id)?;
         state.working_since.get_or_insert_with(Instant::now);
 
         let signature = normalize_output_signature(line);
@@ -128,8 +132,10 @@ impl LoopDetector {
             }
         }
 
-        if detect_uncertainty(line) && !state.emitted_uncertainty_alert {
-            state.emitted_uncertainty_alert = true;
+        let now = Instant::now();
+        if detect_uncertainty(line)
+            && should_emit_alert(&mut state.last_uncertainty_alert, now, self.alert_cooldown)
+        {
             return Some(ObserverFinding {
                 slot_id: slot_id.to_string(),
                 agent_id: agent_id.map(str::to_string),
@@ -156,12 +162,12 @@ impl LoopDetector {
 
         let state = self.slots.entry(slot_id.to_string()).or_default();
         state.working_since.get_or_insert_with(Instant::now);
+        let now = Instant::now();
 
         if self.config.max_identical_outputs > 0
             && state.identical_output_count >= self.config.max_identical_outputs
-            && !state.emitted_loop_alert
+            && should_emit_alert(&mut state.last_loop_alert, now, self.alert_cooldown)
         {
-            state.emitted_loop_alert = true;
             return Some(ObserverFinding {
                 slot_id: slot_id.to_string(),
                 agent_id: agent_id.map(str::to_string),
@@ -178,9 +184,8 @@ impl LoopDetector {
         if let Some(working_since) = state.working_since
             && working_since.elapsed() >= self.config.stuck_timeout
             && !check.has_worktree_changes
-            && !state.emitted_stuck_alert
+            && should_emit_alert(&mut state.last_stuck_alert, now, self.alert_cooldown)
         {
-            state.emitted_stuck_alert = true;
             return Some(ObserverFinding {
                 slot_id: slot_id.to_string(),
                 agent_id: agent_id.map(str::to_string),
@@ -197,11 +202,10 @@ impl LoopDetector {
         if let Some(token_budget) = check.token_budget
             && token_budget > 0
             && !check.has_worktree_changes
-            && !state.emitted_budget_alert
+            && should_emit_alert(&mut state.last_budget_alert, now, self.alert_cooldown)
         {
             let ratio = check.total_tokens as f64 / token_budget as f64;
             if ratio >= self.config.budget_velocity_threshold {
-                state.emitted_budget_alert = true;
                 return Some(ObserverFinding {
                     slot_id: slot_id.to_string(),
                     agent_id: agent_id.map(str::to_string),
@@ -338,19 +342,95 @@ fn detect_uncertainty(line: &str) -> bool {
         || line.contains("DECISION:")
 }
 
+fn should_emit_alert(last_alert: &mut Option<Instant>, now: Instant, cooldown: Duration) -> bool {
+    match last_alert {
+        Some(previous) if now.duration_since(*previous) <= cooldown => false,
+        _ => {
+            *last_alert = Some(now);
+            true
+        }
+    }
+}
+
 fn candidate_paths(line: &str) -> Vec<String> {
     line.split_whitespace()
         .map(trim_token)
         .filter(|token| !token.is_empty())
-        .filter(|token| {
-            token.starts_with('/')
-                || token.starts_with("./")
-                || token.starts_with("../")
-                || token.contains('/')
-                || token.contains('\\')
-        })
+        .filter(|token| is_path_like_token(token))
+        .filter(|token| !is_url_token(token))
+        .filter(|token| !is_source_location_token(token))
+        .filter(|token| !is_mime_type_token(token))
+        .filter(|token| !token.contains("::"))
         .map(str::to_string)
         .collect()
+}
+
+fn is_path_like_token(token: &str) -> bool {
+    token.starts_with('/')
+        || token.starts_with("./")
+        || token.starts_with("../")
+        || token.contains('/')
+        || token.contains('\\')
+}
+
+fn is_url_token(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("ftp://")
+        || lower.starts_with("ssh://")
+}
+
+fn is_source_location_token(token: &str) -> bool {
+    fn is_line_number(value: &str) -> bool {
+        !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
+    }
+
+    if let Some((path, line)) = token.rsplit_once(':')
+        && is_line_number(line)
+        && is_path_like_token(path)
+    {
+        return true;
+    }
+
+    let Some((path_and_line, column)) = token.rsplit_once(':') else {
+        return false;
+    };
+    let Some((path, line)) = path_and_line.rsplit_once(':') else {
+        return false;
+    };
+
+    is_line_number(line) && is_line_number(column) && is_path_like_token(path)
+}
+
+fn is_mime_type_token(token: &str) -> bool {
+    let Some((top_level, subtype)) = token.split_once('/') else {
+        return false;
+    };
+
+    if token.starts_with('/')
+        || token.starts_with("./")
+        || token.starts_with("../")
+        || token.contains('\\')
+        || subtype.contains('/')
+        || subtype.contains('.')
+    {
+        return false;
+    }
+
+    matches!(
+        top_level,
+        "application"
+            | "audio"
+            | "example"
+            | "font"
+            | "image"
+            | "message"
+            | "model"
+            | "multipart"
+            | "text"
+            | "video"
+    )
 }
 
 fn trim_token(token: &str) -> &str {
@@ -456,6 +536,7 @@ mod tests {
     #[test]
     fn decision_marker_triggers_uncertainty_signal() {
         let mut detector = LoopDetector::new(LoopDetectionConfig::default());
+        detector.observe_status("slot-a", TaskStatus::Working);
 
         let finding = detector
             .observe_output("slot-a", Some("agent-a"), "DECISION: need guidance")
@@ -514,6 +595,88 @@ mod tests {
             .expect("budget finding");
 
         assert_eq!(finding.kind, ObserverFindingKind::BudgetVelocity);
+    }
+
+    #[test]
+    fn observe_output_ignores_unknown_slots() {
+        let mut detector = LoopDetector::new(LoopDetectionConfig::default());
+
+        assert_eq!(
+            detector.observe_output("missing-slot", Some("agent-a"), "write src/lib.rs"),
+            None
+        );
+        assert!(detector.slots.is_empty());
+    }
+
+    #[test]
+    fn loop_alert_rearms_after_cooldown() {
+        let mut detector = LoopDetector::new(LoopDetectionConfig {
+            max_identical_outputs: 3,
+            ..LoopDetectionConfig::default()
+        });
+        detector.alert_cooldown = Duration::from_millis(10);
+
+        detector.observe_status("slot-a", TaskStatus::Working);
+        detector.observe_output("slot-a", Some("agent-a"), "write src/lib.rs");
+        detector.observe_output("slot-a", Some("agent-a"), "write src/lib.rs");
+        detector.observe_output("slot-a", Some("agent-a"), "write src/lib.rs");
+
+        let check = LoopCheck {
+            task_status: TaskStatus::Working,
+            total_tokens: 0,
+            token_budget: None,
+            has_worktree_changes: true,
+        };
+
+        assert!(detector.check("slot-a", Some("agent-a"), check).is_some());
+        assert_eq!(detector.check("slot-a", Some("agent-a"), check), None);
+
+        std::thread::sleep(Duration::from_millis(15));
+
+        assert!(detector.check("slot-a", Some("agent-a"), check).is_some());
+    }
+
+    #[test]
+    fn candidate_paths_filters_common_non_filesystem_tokens() {
+        let candidates = candidate_paths(
+            "see https://example.com/path src/lib.rs:42: application/json std::io::Error /etc/passwd ../escape/attempt subdir/file.rs",
+        );
+
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate == "https://example.com/path")
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate == "src/lib.rs:42")
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate == "application/json")
+        );
+        assert!(
+            !candidates
+                .iter()
+                .any(|candidate| candidate == "std::io::Error")
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == "/etc/passwd")
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == "../escape/attempt")
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate == "subdir/file.rs")
+        );
     }
 
     #[test]
