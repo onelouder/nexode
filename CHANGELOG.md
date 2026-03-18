@@ -16,3 +16,4 @@
 - [2026-03-15] [pc] Fixed TUI status colors to align with kanban spec D-009 (I-026)
 - [2026-03-15] [gpt] Completed Sprint 6: fixed TUI gap recovery and timezone handling, fixed Review resume and immediate merge draining, added daemon→TUI gRPC integration coverage, and cleaned up CLI/docs polish
 - [2026-03-17] [gpt] Completed Sprint 7: hardened TUI reconnect behavior, command history/completion/status UX, help overlay, demo wait-for-DONE flow, and LoopDetected label parsing
+- [2026-03-17] [gpt] Completed Sprint 8: hardened observer slot/cooldown/path handling, added proto finding_kind support, rejected empty TOKENS telemetry, documented Claude permission flags, declared Rust 1.85 MSRV, and added daemon restart/reconnect integration coverage

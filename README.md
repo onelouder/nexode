@@ -17,6 +17,10 @@
 4. Read your platform file in `.agents/` if it exists
 5. Begin work within your capabilities
 
+## Requirements
+
+- Rust 1.85+ (edition 2024)
+
 ## Project Structure
 
 ```
