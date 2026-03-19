@@ -1,7 +1,7 @@
 ---
 agent: gpt
-claimed: 2026-03-18T01:01:47-07:00
-status: handoff
+claimed: 2026-03-19T07:41:41-07:00
+status: claimed
 from: gpt
 task: "Sprint 10 — React Webviews + Extension Tests"
 branch: "agent/gpt/sprint-10-react-webviews"
@@ -10,8 +10,20 @@ next: gpt
 
 # HANDOFF.md
 
-> Last updated: 2026-03-18 by gpt
+> Last updated: 2026-03-19 by gpt
 > Sprint 9 review complete. Merged as PR #21 at `0c8cee4`.
+
+## Current Session (2026-03-19)
+
+Sprint 10 is actively claimed by `gpt`. This session is normalizing the implementation plan against the locked Phase 3 spec and accepted decisions before code work continues.
+
+Planning targets for this session:
+
+- align Sprint 10 scope with `sec-11-week-1-grpc-bridge-state-cache` and `sec-11-weeks-2-4-multi-monitor-react-webviews`
+- preserve D-005 manual multi-monitor scope for Phase 3
+- preserve D-009 / D-010 Kanban semantics, including `MERGE_QUEUE` and `RESOLVING`
+- clarify `MoveTask` vs `AssignTask` semantics for the Kanban board before implementing webview plumbing
+- after plan normalization, turn the restored local VS Code extension WIP into a green plumbing tranche
 
 ## Overnight Checkpoint (2026-03-18)
 

@@ -183,3 +183,15 @@
 - **Dependencies:** Requires Phase 4 infrastructure: Shared Memory Bus (for `ΔS_relevant` computation), relevance tags on memory nodes (for Jaccard filtering), and an LLM evaluation endpoint (for calibrating P against ground-truth coherence). See `docs/spec/deferred.md` for Phase 4 requirements.
 - **Design reference:** `docs/architecture/observer-design.md` Section 3.
 - **Consequences:** (1) Phase 4 Observer gains a `CoherenceTracker` struct implementing this model. (2) The daemon's SQLite schema gains an `observer_evaluations` table for storing P(S,t) time series per agent. (3) The TUI/VS Code extension can render coherence sparklines per agent slot. (4) Checkpoint frequency becomes an adaptive parameter rather than a fixed config value.
+
+---
+
+## D-012: Phase 3 Kanban command semantics separate status movement from agent assignment
+
+- **Date:** 2026-03-19
+- **By:** gpt
+- **Status:** ACCEPTED
+- **Context:** The locked Phase 3 spec mixes two different Kanban interactions. `sec-05-macro-kanban-board-task-queue` and D-009 define the board primarily as a task-status surface whose columns are isomorphic with `TaskStatus` (`PENDING`, `WORKING`, `REVIEW`, `MERGE_QUEUE`, `RESOLVING`, `DONE`, `PAUSED`, `ARCHIVED`). Meanwhile `REQ-P3-006` says drag-and-drop task assignment shall trigger `AssignTask`, which is an agent-targeted command from `sec-03-04-events-commands`, not a task-status transition. Without clarification, Sprint 10 planning oscillates between a column board driven by `MoveTask` and an assignment surface driven by `AssignTask`.
+- **Decision:** Phase 3 Kanban interactions are split into two command classes. Moving a task card between task-status columns dispatches `MoveTask { task_id, target }`. Explicit assignment or reassignment of a task to a specific slot or agent dispatches `AssignTask { task_id, agent_id }`. Sprint 10's first implementation tranche prioritizes the status-column board, because that is the minimum surface required to render and manipulate the D-009 state machine coherently. Agent-assignment affordances may be layered onto the same Kanban surface later without changing the command semantics.
+- **Rationale:** Status transitions and agent assignment are orthogonal operations. Collapsing them into one drag gesture makes the Kanban board ambiguous: a card moved from `REVIEW` to `MERGE_QUEUE` is about lifecycle progression, not agent ownership. D-009 already establishes that the board columns must map 1:1 to `TaskStatus`. `MoveTask` is therefore the correct transport for column moves, while `AssignTask` remains available for explicit reassignment UI.
+- **Consequences:** Sprint 10 planning and implementation shall use `MoveTask` for column transitions and reserve `AssignTask` for explicit assignment controls. `PLAN_NOW.md` is updated accordingly. This decision interprets `REQ-P3-006` as requiring assignment capability on the Kanban/DAG surface, not as forbidding `MoveTask` for status-column interaction.
