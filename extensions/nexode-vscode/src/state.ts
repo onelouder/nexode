@@ -182,6 +182,12 @@ export interface SlotSummary {
   status: TaskStatusName;
 }
 
+export interface AgentPresence {
+  agentId: string;
+  slotId: string;
+  state: AgentStateName;
+}
+
 export interface AggregateMetrics {
   agentCount: number;
   totalTokens: number;
@@ -269,6 +275,7 @@ export class StateCache {
   private readonly changeEmitter = new Emitter<void>();
   private projects: Project[] = [];
   private taskDag: TaskNode[] = [];
+  private agents = new Map<string, AgentPresence>();
   private totalSessionCost = 0;
   private sessionBudgetMaxUsd = 0;
   private lastEventSequence = 0;
@@ -283,6 +290,7 @@ export class StateCache {
   public applySnapshot(snapshot: FullStateSnapshot): void {
     this.projects = snapshot.projects.map(cloneProject);
     this.taskDag = snapshot.taskDag.map(cloneTaskNode);
+    this.agents = seedAgents(this.projects, this.agents);
     this.totalSessionCost = snapshot.totalSessionCost;
     this.sessionBudgetMaxUsd = snapshot.sessionBudgetMaxUsd;
     this.lastEventSequence = snapshot.lastEventSequence;
@@ -308,6 +316,13 @@ export class StateCache {
         .find((entry) => entry.currentAgentId === event.agentTelemetryUpdated?.agentId);
       if (slot) {
         slot.totalTokens += event.agentTelemetryUpdated.incrTokens;
+        if (!this.agents.has(event.agentTelemetryUpdated.agentId)) {
+          this.agents.set(event.agentTelemetryUpdated.agentId, {
+            agentId: event.agentTelemetryUpdated.agentId,
+            slotId: slot.id,
+            state: 'AGENT_STATE_UNSPECIFIED',
+          });
+        }
       }
     }
 
@@ -323,7 +338,20 @@ export class StateCache {
         .flatMap((project) => project.slots)
         .find((entry) => entry.id === event.slotAgentSwapped?.slotId);
       if (slot) {
+        const preservedState = event.slotAgentSwapped.newAgentId
+          ? this.agents.get(event.slotAgentSwapped.newAgentId)?.state
+          : undefined;
+        if (event.slotAgentSwapped.oldAgentId) {
+          this.agents.delete(event.slotAgentSwapped.oldAgentId);
+        }
         slot.currentAgentId = event.slotAgentSwapped.newAgentId;
+        if (event.slotAgentSwapped.newAgentId) {
+          this.agents.set(event.slotAgentSwapped.newAgentId, {
+            agentId: event.slotAgentSwapped.newAgentId,
+            slotId: slot.id,
+            state: preservedState ?? 'AGENT_STATE_UNSPECIFIED',
+          });
+        }
       }
     }
 
@@ -331,8 +359,18 @@ export class StateCache {
       const slot = this.projects
         .flatMap((project) => project.slots)
         .find((entry) => entry.id === event.agentStateChanged?.slotId);
-      if (slot && !slot.currentAgentId) {
+      const previousAgentId = slot?.currentAgentId;
+      if (slot) {
         slot.currentAgentId = event.agentStateChanged.agentId;
+      }
+
+      this.agents.set(event.agentStateChanged.agentId, {
+        agentId: event.agentStateChanged.agentId,
+        slotId: event.agentStateChanged.slotId,
+        state: event.agentStateChanged.newState,
+      });
+      if (previousAgentId && previousAgentId !== event.agentStateChanged.agentId) {
+        this.agents.delete(previousAgentId);
       }
     }
 
@@ -363,6 +401,20 @@ export class StateCache {
 
   public getProjects(): readonly Project[] {
     return this.projects;
+  }
+
+  public getAgentStates(): AgentPresence[] {
+    return [...this.agents.values()].map(cloneAgentPresence);
+  }
+
+  public getAgentState(agentId: string): AgentStateName | undefined {
+    return this.agents.get(agentId)?.state;
+  }
+
+  public getAgentsBySlot(slotId: string): AgentPresence[] {
+    return [...this.agents.values()]
+      .filter((agent) => agent.slotId === slotId)
+      .map(cloneAgentPresence);
   }
 
   public getTaskDag(): readonly TaskNode[] {
@@ -399,20 +451,16 @@ export class StateCache {
   }
 
   public getAggregateMetrics(): AggregateMetrics {
-    const agentIds = new Set<string>();
     let totalTokens = 0;
 
     for (const project of this.projects) {
       for (const slot of project.slots) {
         totalTokens += slot.totalTokens;
-        if (slot.currentAgentId) {
-          agentIds.add(slot.currentAgentId);
-        }
       }
     }
 
     return {
-      agentCount: agentIds.size,
+      agentCount: this.agents.size,
       totalTokens,
       totalSessionCost: this.totalSessionCost,
     };
@@ -701,6 +749,33 @@ function cloneTaskNode(task: TaskNode): TaskNode {
     ...task,
     dependencyIds: [...task.dependencyIds],
   };
+}
+
+function cloneAgentPresence(agent: AgentPresence): AgentPresence {
+  return { ...agent };
+}
+
+function seedAgents(
+  projects: readonly Project[],
+  previous: ReadonlyMap<string, AgentPresence>,
+): Map<string, AgentPresence> {
+  const next = new Map<string, AgentPresence>();
+
+  for (const project of projects) {
+    for (const slot of project.slots) {
+      if (!slot.currentAgentId) {
+        continue;
+      }
+
+      next.set(slot.currentAgentId, {
+        agentId: slot.currentAgentId,
+        slotId: slot.id,
+        state: previous.get(slot.currentAgentId)?.state ?? 'AGENT_STATE_UNSPECIFIED',
+      });
+    }
+  }
+
+  return next;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
