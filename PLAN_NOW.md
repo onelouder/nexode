@@ -2,7 +2,7 @@
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
-> Status: in progress on `agent/gpt/sprint-10-react-webviews` (Tranche A: plan normalization + plumbing)
+> Status: Tranche A complete on `agent/gpt/sprint-10-react-webviews`; pending `pc` review, with Tranche B next
 > Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
 > Previous sprint: Sprint 9 (VS Code Extension Scaffold) — PR #21, commit `0c8cee4`
 
@@ -12,7 +12,7 @@ Build the two React WebviewPanels (Synapse Grid, Macro Kanban) and add test cove
 
 ## Checkpoint
 
-Sprint 10 is active, but the codebase is still between scaffold and implementation. The only local WIP is extension-side plumbing in `extensions/nexode-vscode/`; it has not yet produced a runnable webview or test harness.
+Sprint 10 now has a coherent, verified foundation tranche. The branch contains working webview build plumbing, registered panel/provider shells, normalized Phase 3 planning, and Tier 1 `state.ts` coverage. Rich UI behavior is still pending.
 
 ## Normalized Scope
 
@@ -38,7 +38,7 @@ Working interpretation for Sprint 10:
 
 ## Implementation Tranches
 
-### Tranche A (active now): Planning + Plumbing + Test Foundation
+### Tranche A (complete on this branch): Planning + Plumbing + Test Foundation
 
 - normalize the sprint plan against the accepted spec decisions
 - land a separate webview build target and basic extension registration for panel/provider shells
@@ -46,7 +46,7 @@ Working interpretation for Sprint 10:
 - add Tier 1 tests for `src/state.ts`
 - restore green verification for `npm run build`, `npm run build:webview`, `npm run check-types`, and `npm test`
 
-### Tranche B: Webview Surface Shells
+### Tranche B (next): Webview Surface Shells
 
 - implement the Synapse Grid `WebviewPanel` and sidebar `WebviewViewProvider`
 - implement the Macro Kanban `WebviewPanel`

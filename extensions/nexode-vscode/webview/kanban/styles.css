@@ -1,0 +1,137 @@
+:root {
+  color-scheme: dark;
+  --bg: #101314;
+  --panel: rgba(17, 24, 28, 0.88);
+  --panel-2: rgba(11, 16, 20, 0.8);
+  --line: rgba(164, 186, 181, 0.18);
+  --text: #eef7f4;
+  --muted: #9cb4ad;
+  --accent: #ffbf47;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  font-family: 'Segoe UI', sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top right, rgba(255, 191, 71, 0.16), transparent 28%),
+    linear-gradient(180deg, #0b0f11 0%, #12181c 100%);
+}
+
+body {
+  min-height: 100vh;
+}
+
+.kanban-shell {
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.kanban-header,
+.kanban-column,
+.filter select {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+}
+
+.kanban-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+  padding: 18px;
+  border-radius: 22px;
+}
+
+.kanban-header h1,
+.column-header h2,
+.task-card h3 {
+  margin: 0;
+}
+
+.eyebrow,
+.task-id,
+.task-meta,
+.filter span,
+.column-header span,
+.empty-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filter {
+  display: grid;
+  gap: 8px;
+}
+
+.filter select {
+  color: var(--text);
+  border-radius: 14px;
+  padding: 10px 12px;
+}
+
+.column-strip {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+}
+
+.kanban-column {
+  border-radius: 18px;
+  min-height: 360px;
+  padding: 14px;
+}
+
+.column-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.column-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.task-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--panel-2);
+}
+
+.task-card h3 {
+  margin-top: 6px;
+  font-size: 15px;
+}
+
+.task-meta {
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .kanban-shell {
+    padding: 14px;
+  }
+
+  .kanban-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

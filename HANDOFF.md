@@ -1,11 +1,11 @@
 ---
 agent: gpt
 claimed: 2026-03-19T07:41:41-07:00
-status: claimed
+status: handoff
 from: gpt
 task: "Sprint 10 — React Webviews + Extension Tests"
 branch: "agent/gpt/sprint-10-react-webviews"
-next: gpt
+next: pc
 ---
 
 # HANDOFF.md
@@ -15,15 +15,46 @@ next: gpt
 
 ## Current Session (2026-03-19)
 
-Sprint 10 is actively claimed by `gpt`. This session is normalizing the implementation plan against the locked Phase 3 spec and accepted decisions before code work continues.
+Sprint 10 Tranche A is complete on this branch and ready for `pc` review before Tranche B UI work continues.
 
-Planning targets for this session:
+Completed in this session:
 
-- align Sprint 10 scope with `sec-11-week-1-grpc-bridge-state-cache` and `sec-11-weeks-2-4-multi-monitor-react-webviews`
-- preserve D-005 manual multi-monitor scope for Phase 3
-- preserve D-009 / D-010 Kanban semantics, including `MERGE_QUEUE` and `RESOLVING`
-- clarify `MoveTask` vs `AssignTask` semantics for the Kanban board before implementing webview plumbing
-- after plan normalization, turn the restored local VS Code extension WIP into a green plumbing tranche
+- normalized Sprint 10 scope in `PLAN_NOW.md` against `sec-05-synapse-telemetry-grid`, `sec-05-macro-kanban-board-task-queue`, `sec-11-week-1-grpc-bridge-state-cache`, `sec-11-weeks-2-4-multi-monitor-react-webviews`, D-005, D-009, and D-010
+- added D-012 to resolve Kanban `MoveTask` vs `AssignTask` semantics for Phase 3
+- turned the restored local extension WIP into a green plumbing tranche:
+  - separate webview build target with minified React bundles
+  - `SynapseGridPanel`, `SynapseSidebarProvider`, and `KanbanPanel` shells
+  - shared webview bridge and initial React entry points
+  - `state.ts` decoupled from VS Code runtime and extended for Phase 3 observer event normalization
+  - Tier 1 `state.ts` tests under `extensions/nexode-vscode/test/state.test.ts`
+
+Verification completed in this session:
+
+- `cd extensions/nexode-vscode && npm install`
+- `cd extensions/nexode-vscode && npm run build`
+- `cd extensions/nexode-vscode && npm run build:webview`
+- `cd extensions/nexode-vscode && npm run check-types`
+- `cd extensions/nexode-vscode && npm test`
+- `cargo check --workspace`
+- `cargo test --workspace`
+
+Primary output files:
+
+- `DECISIONS.md`
+- `PLAN_NOW.md`
+- `extensions/nexode-vscode/src/state.ts`
+- `extensions/nexode-vscode/src/extension.ts`
+- `extensions/nexode-vscode/src/commands.ts`
+- `extensions/nexode-vscode/src/webview-support.ts`
+- `extensions/nexode-vscode/src/synapse-grid-panel.ts`
+- `extensions/nexode-vscode/src/kanban-panel.ts`
+- `extensions/nexode-vscode/webview/`
+- `extensions/nexode-vscode/test/state.test.ts`
+
+Recommended next agent:
+
+- `pc` review and merge this Tranche A foundation work
+- after merge, `gpt` continue with Tranche B/C richer Synapse Grid and Kanban behavior
 
 ## Overnight Checkpoint (2026-03-18)
 

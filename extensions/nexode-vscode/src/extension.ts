@@ -3,9 +3,11 @@ import * as vscode from 'vscode';
 
 import { DaemonClient, readDaemonConfiguration } from './daemon-client';
 import { registerCommands } from './commands';
+import { KanbanPanel } from './kanban-panel';
 import { SlotTreeProvider } from './slot-tree-provider';
 import { StateCache } from './state';
 import { NexodeStatusBar } from './status-bar';
+import { SynapseGridPanel, SynapseSidebarProvider } from './synapse-grid-panel';
 
 let activeClient: DaemonClient | undefined;
 
@@ -19,6 +21,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   const treeProvider = new SlotTreeProvider(state);
   const statusBar = new NexodeStatusBar(state);
+  const synapseGridPanel = new SynapseGridPanel(context.extensionUri, state);
+  const synapseSidebarProvider = new SynapseSidebarProvider(context.extensionUri, state);
+  const kanbanPanel = new KanbanPanel(context.extensionUri, state, client);
   const treeView = vscode.window.createTreeView('nexodeSlots', {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
@@ -31,7 +36,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     client,
     treeProvider,
     statusBar,
+    synapseGridPanel,
+    synapseSidebarProvider,
+    kanbanPanel,
     treeView,
+    vscode.window.registerWebviewViewProvider('nexodeSynapseSidebar', synapseSidebarProvider, {
+      webviewOptions: {
+        retainContextWhenHidden: true,
+      },
+    }),
     client.onDidReceiveSnapshot((snapshot) => {
       state.applySnapshot(snapshot);
     }),
@@ -48,6 +61,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } catch {
         // Older builds may not expose the auto-generated focus command for contributed views.
       }
+    }, async () => {
+      synapseGridPanel.show();
+    }, async () => {
+      kanbanPanel.show();
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (

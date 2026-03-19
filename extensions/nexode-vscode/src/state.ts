@@ -1,5 +1,3 @@
-import * as vscode from 'vscode';
-
 export type AgentModeName =
   | 'AGENT_MODE_UNSPECIFIED'
   | 'AGENT_MODE_NORMAL'
@@ -101,6 +99,52 @@ export interface SlotAgentSwappedEvent {
   reason: string;
 }
 
+export interface UncertaintyFlagTriggeredEvent {
+  agentId: string;
+  taskId: string;
+  reason: string;
+}
+
+export interface WorktreeStatusChangedEvent {
+  worktreeId: string;
+  newRisk: number;
+}
+
+export type ObserverInterventionName =
+  | 'OBSERVER_INTERVENTION_UNSPECIFIED'
+  | 'OBSERVER_INTERVENTION_ALERT'
+  | 'OBSERVER_INTERVENTION_KILL'
+  | 'OBSERVER_INTERVENTION_PAUSE';
+
+export type FindingKindName =
+  | 'FINDING_KIND_UNSPECIFIED'
+  | 'FINDING_KIND_LOOP_DETECTED'
+  | 'FINDING_KIND_STUCK'
+  | 'FINDING_KIND_BUDGET_VELOCITY';
+
+export interface LoopDetected {
+  reason: string;
+  intervention: ObserverInterventionName;
+  findingKind: FindingKindName;
+}
+
+export interface SandboxViolation {
+  path: string;
+  reason: string;
+}
+
+export interface UncertaintySignal {
+  reason: string;
+}
+
+export interface ObserverAlertEvent {
+  slotId: string;
+  agentId: string;
+  loopDetected?: LoopDetected;
+  sandboxViolation?: SandboxViolation;
+  uncertaintySignal?: UncertaintySignal;
+}
+
 export interface HypervisorEvent {
   eventId: string;
   timestampMs: number;
@@ -109,8 +153,11 @@ export interface HypervisorEvent {
   agentStateChanged?: AgentStateChangedEvent;
   agentTelemetryUpdated?: AgentTelemetryUpdatedEvent;
   taskStatusChanged?: TaskStatusChangedEvent;
+  uncertaintyFlag?: UncertaintyFlagTriggeredEvent;
+  worktreeStatusChanged?: WorktreeStatusChangedEvent;
   projectBudgetAlert?: ProjectBudgetAlertEvent;
   slotAgentSwapped?: SlotAgentSwappedEvent;
+  observerAlert?: ObserverAlertEvent;
   payload?: string;
 }
 
@@ -140,6 +187,12 @@ export interface AggregateMetrics {
   totalTokens: number;
   totalSessionCost: number;
 }
+
+export interface DisposableLike {
+  dispose(): void;
+}
+
+export type Event<T> = (listener: (event: T) => void) => DisposableLike;
 
 const DEFAULT_CONNECTION_STATUS: ConnectionStatus = {
   state: 'disconnected',
@@ -175,8 +228,45 @@ const AGENT_MODES: AgentModeName[] = [
   'AGENT_MODE_FULL_AUTO',
 ];
 
-export class StateCache implements vscode.Disposable {
-  private readonly changeEmitter = new vscode.EventEmitter<void>();
+const OBSERVER_INTERVENTIONS: ObserverInterventionName[] = [
+  'OBSERVER_INTERVENTION_UNSPECIFIED',
+  'OBSERVER_INTERVENTION_ALERT',
+  'OBSERVER_INTERVENTION_KILL',
+  'OBSERVER_INTERVENTION_PAUSE',
+];
+
+const FINDING_KINDS: FindingKindName[] = [
+  'FINDING_KIND_UNSPECIFIED',
+  'FINDING_KIND_LOOP_DETECTED',
+  'FINDING_KIND_STUCK',
+  'FINDING_KIND_BUDGET_VELOCITY',
+];
+
+class Emitter<T> implements DisposableLike {
+  private readonly listeners = new Set<(event: T) => void>();
+
+  public readonly event: Event<T> = (listener) => {
+    this.listeners.add(listener);
+    return {
+      dispose: () => {
+        this.listeners.delete(listener);
+      },
+    };
+  };
+
+  public fire(event: T): void {
+    for (const listener of [...this.listeners]) {
+      listener(event);
+    }
+  }
+
+  public dispose(): void {
+    this.listeners.clear();
+  }
+}
+
+export class StateCache {
+  private readonly changeEmitter = new Emitter<void>();
   private projects: Project[] = [];
   private taskDag: TaskNode[] = [];
   private totalSessionCost = 0;
@@ -259,6 +349,16 @@ export class StateCache implements vscode.Disposable {
 
   public getConnectionStatus(): ConnectionStatus {
     return this.connectionStatus;
+  }
+
+  public getSnapshot(): FullStateSnapshot {
+    return {
+      projects: this.projects.map(cloneProject),
+      taskDag: this.taskDag.map(cloneTaskNode),
+      totalSessionCost: this.totalSessionCost,
+      sessionBudgetMaxUsd: this.sessionBudgetMaxUsd,
+      lastEventSequence: this.lastEventSequence,
+    };
   }
 
   public getProjects(): readonly Project[] {
@@ -346,8 +446,11 @@ export function normalizeEvent(raw: Record<string, unknown> | undefined): Hyperv
     agentStateChanged: normalizeAgentStateChanged(raw?.agentStateChanged),
     agentTelemetryUpdated: normalizeAgentTelemetryUpdated(raw?.agentTelemetryUpdated),
     taskStatusChanged: normalizeTaskStatusChanged(raw?.taskStatusChanged),
+    uncertaintyFlag: normalizeUncertaintyFlagTriggered(raw?.uncertaintyFlag),
+    worktreeStatusChanged: normalizeWorktreeStatusChanged(raw?.worktreeStatusChanged),
     projectBudgetAlert: normalizeProjectBudgetAlert(raw?.projectBudgetAlert),
     slotAgentSwapped: normalizeSlotAgentSwapped(raw?.slotAgentSwapped),
+    observerAlert: normalizeObserverAlert(raw?.observerAlert),
     payload: coerceString(raw?.payload),
   };
 }
@@ -509,6 +612,82 @@ function normalizeSlotAgentSwapped(raw: unknown): SlotAgentSwappedEvent | undefi
   };
 }
 
+function normalizeUncertaintyFlagTriggered(raw: unknown): UncertaintyFlagTriggeredEvent | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    agentId: coerceString(payload.agentId),
+    taskId: coerceString(payload.taskId),
+    reason: coerceString(payload.reason),
+  };
+}
+
+function normalizeWorktreeStatusChanged(raw: unknown): WorktreeStatusChangedEvent | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    worktreeId: coerceString(payload.worktreeId),
+    newRisk: coerceNumber(payload.newRisk),
+  };
+}
+
+function normalizeObserverAlert(raw: unknown): ObserverAlertEvent | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    slotId: coerceString(payload.slotId),
+    agentId: coerceString(payload.agentId),
+    loopDetected: normalizeLoopDetected(payload.loopDetected),
+    sandboxViolation: normalizeSandboxViolation(payload.sandboxViolation),
+    uncertaintySignal: normalizeUncertaintySignal(payload.uncertaintySignal),
+  };
+}
+
+function normalizeLoopDetected(raw: unknown): LoopDetected | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    reason: coerceString(payload.reason),
+    intervention: coerceEnum(payload.intervention, OBSERVER_INTERVENTIONS),
+    findingKind: coerceEnum(payload.findingKind, FINDING_KINDS),
+  };
+}
+
+function normalizeSandboxViolation(raw: unknown): SandboxViolation | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    path: coerceString(payload.path),
+    reason: coerceString(payload.reason),
+  };
+}
+
+function normalizeUncertaintySignal(raw: unknown): UncertaintySignal | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    reason: coerceString(payload.reason),
+  };
+}
+
 function cloneProject(project: Project): Project {
   return {
     ...project,
@@ -528,11 +707,11 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-function coerceString(value: unknown): string {
+export function coerceString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function coerceNumber(value: unknown): number {
+export function coerceNumber(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }
@@ -549,6 +728,6 @@ function coerceNumber(value: unknown): number {
   return 0;
 }
 
-function coerceEnum<T extends string>(value: unknown, options: readonly T[]): T {
+export function coerceEnum<T extends string>(value: unknown, options: readonly T[]): T {
   return typeof value === 'string' && options.includes(value as T) ? (value as T) : options[0];
 }
