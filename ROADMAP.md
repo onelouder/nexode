@@ -158,12 +158,23 @@
 
 ### M3b-next: Sprint 10 — React Webviews + Extension Tests ⏳
 - **Target:** TBD
-- **Status:** Not Started
-- **Deliverables:**
-  - [ ] Synapse Grid WebviewPanel (React, agent cards, project groups)
-  - [ ] Macro Kanban WebviewPanel (React, DAG drag-and-drop)
-  - [ ] Extension host tests (Mocha + @vscode/test-electron)
-  - [ ] Unit tests for state.ts normalization layer
+- **Status:** Tranche A complete (PR #22, commit `4bfe2ff`). Tranches B/C pending.
+- **Agent:** gpt (Codex)
+- **Review:** `docs/reviews/sprint-10a-review.md`
+- **Tranche A Deliverables (complete):**
+  - [x] Webview build pipeline (esbuild, IIFE + browser target, minified React bundles)
+  - [x] SynapseGridPanel, SynapseSidebarProvider, KanbanPanel shells
+  - [x] Shared postMessage bridge with nonce-based CSP
+  - [x] React 18 entry points for Synapse Grid and Kanban surfaces
+  - [x] state.ts: Emitter<T> replaces vscode.EventEmitter for testability
+  - [x] state.ts: Full Phase 3 observer event normalization
+  - [x] Tier 1 unit tests for state.ts (251 lines, 4 test cases)
+  - [x] D-012: MoveTask vs AssignTask command semantics
+- **Tranche B/C Deliverables (pending):**
+  - [ ] Synapse Grid: live state rendering, project groups, flat view, focus view
+  - [ ] Macro Kanban: live state rendering, drag-and-drop column moves
+  - [ ] Task card join (TaskNode → AgentSlot for branch + cost display)
+  - [ ] Extension host integration tests (Tier 2, if feasible)
   - [ ] Observer alert display in TreeView/notifications
   - [ ] R-008 mitigation: bypass Extension Host for agent data streams
 
