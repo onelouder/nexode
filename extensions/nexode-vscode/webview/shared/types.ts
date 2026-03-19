@@ -3,6 +3,7 @@ import type {
   AggregateMetrics,
   ConnectionStatus,
   FullStateSnapshot,
+  RecentObserverAlert,
   TaskStatusName,
 } from '../../src/state';
 
@@ -12,6 +13,7 @@ export interface StateEnvelope {
   surface: SurfaceKind;
   snapshot: FullStateSnapshot;
   agents: AgentPresence[];
+  alerts: RecentObserverAlert[];
   metrics: AggregateMetrics;
   connection: ConnectionStatus;
   hasSnapshot: boolean;

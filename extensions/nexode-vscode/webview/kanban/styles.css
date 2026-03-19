@@ -157,6 +157,10 @@ body {
   cursor: grab;
 }
 
+.task-card.is-alerted {
+  border-color: rgba(255, 191, 71, 0.42);
+}
+
 .task-card.is-dragging {
   opacity: 0.55;
 }
@@ -174,6 +178,10 @@ body {
   align-items: center;
 }
 
+.card-chip-row {
+  flex-wrap: wrap;
+}
+
 .task-description {
   margin-top: 8px;
   font-size: 13px;
@@ -188,6 +196,13 @@ body {
 
 .card-chip-row {
   margin-top: 12px;
+}
+
+.task-alert {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .chip {
@@ -218,6 +233,11 @@ body {
 
 .chip[data-tone='muted'] {
   color: var(--muted);
+}
+
+.chip[data-tone='danger'] {
+  border-color: rgba(255, 138, 138, 0.38);
+  color: #ffb0b0;
 }
 
 .task-details {

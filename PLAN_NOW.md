@@ -2,13 +2,36 @@
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
-> Status: ready for gpt to claim
+> Status: complete on `agent/gpt/sprint-10c-view-modes`; ready for `pc` review
 > Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
 > Previous tranches: Tranche A — PR #22, commit `4bfe2ff`; Tranche B — PR #23, commit `9b1a8a8`
 
 ## Objective
 
 Add Synapse Grid view mode switching, extract duplicated webview utilities, and render observer alerts in the webview surfaces. After this tranche, the Synapse Grid supports all three view modes from the spec, shared formatting code is deduplicated, and observer findings are visible in the UI.
+
+## Result
+
+Tranche C is complete and reviewable.
+
+- C-01 delivered: Synapse Grid now supports Project Groups, Flat View, and Focus View, with flat-view priority sorting and expanded focus cards
+- C-02 delivered: duplicated formatter/tone helpers are extracted into `webview/shared/format.ts`, and both React surfaces now use the shared module
+- C-03 delivered: recent observer alerts are buffered in `StateCache`, included in `StateEnvelope`, joined into slot/task view models, and rendered in Synapse Grid, sidebar, and Macro Kanban
+- C-04 delivered: Tier 1 coverage now includes shared formatter tests, recent-alert buffer tests, flat-view sorting tests, and the `projectFilter = 'all'` default path
+- Stretch outcome: Focus View also surfaces dependency chips and recent alert detail without relaxing CSP
+
+Verification completed successfully:
+
+```
+cd extensions/nexode-vscode
+npm run build
+npm run build:webview
+npm run check-types
+npm test
+cd ../..
+cargo check --workspace
+cargo test --workspace
+```
 
 ## Starting Point
 

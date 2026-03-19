@@ -20,3 +20,4 @@
 - [2026-03-18] [gpt] Added Sprint 9 `extensions/nexode-vscode`: VS Code extension scaffold, gRPC daemon client with reconnect, native project→slot TreeView, slot command palette actions, and connection/metrics status bar
 - [2026-03-19] [gpt] Normalized Sprint 10 Phase 3 planning, added the VS Code webview build pipeline and shell panels/sidebar, decoupled `state.ts` from the VS Code runtime, and added Tier 1 extension state tests
 - [2026-03-19] [gpt] Completed Sprint 10 Tranche B: added live Synapse Grid and Macro Kanban rendering, task/slot/project join selectors, Kanban drag-and-drop move dispatch, agent-state tracking in `StateCache`, and expanded Tier 1 extension coverage
+- [2026-03-19] [gpt] Completed Sprint 10 Tranche C: added Synapse Grid Project Groups/Flat/Focus modes, extracted shared webview formatters, surfaced observer alerts in both React webviews, and expanded Tier 1 selector/formatter/alert coverage

@@ -2,6 +2,16 @@ import React, { useEffect, useState } from 'react';
 
 import { buildKanbanCardModels, type KanbanCardModel } from '../../src/view-models';
 import { onHostMessage, postHostMessage, postReady } from '../shared/bridge';
+import {
+  agentTone,
+  alertTone,
+  formatAgentState,
+  formatAlertKind,
+  formatAlertMessage,
+  formatCount,
+  formatCurrency,
+  statusTone,
+} from '../shared/format';
 import type { StateEnvelope } from '../shared/types';
 import type { TaskStatusName } from '../../src/state';
 
@@ -16,6 +26,7 @@ const EMPTY_STATE: StateEnvelope = {
     lastEventSequence: 0,
   },
   agents: [],
+  alerts: [],
   metrics: {
     agentCount: 0,
     totalTokens: 0,
@@ -63,7 +74,7 @@ export function KanbanApp(): React.JSX.Element {
     }
   }, [projectFilter, state.snapshot.projects]);
 
-  const cards = buildKanbanCardModels(state.snapshot, state.agents, projectFilter);
+  const cards = buildKanbanCardModels(state.snapshot, state.agents, projectFilter, state.alerts);
 
   return (
     <main className="kanban-shell">
@@ -180,7 +191,7 @@ function KanbanColumn({
         ) : (
           cards.map((card) => (
             <section
-              className={`task-card${draggingTaskId === card.task.id ? ' is-dragging' : ''}`}
+              className={`task-card${draggingTaskId === card.task.id ? ' is-dragging' : ''}${card.alerts.length ? ' is-alerted' : ''}`}
               draggable
               key={card.task.id}
               onDragStart={(event) => {
@@ -208,7 +219,13 @@ function KanbanColumn({
                 <span className="chip" data-tone="neutral">
                   {card.slot?.branch || 'no branch'}
                 </span>
+                {card.alerts[0] ? (
+                  <span className="chip" data-tone={alertTone(card.alerts[0])}>
+                    {formatAlertKind(card.alerts[0])}
+                  </span>
+                ) : null}
               </div>
+              {card.alerts[0] ? <p className="task-alert">{formatAlertMessage(card.alerts[0])}</p> : null}
               <dl className="task-details">
                 <div>
                   <dt>Tokens</dt>
@@ -234,64 +251,4 @@ function MetricChip({ label, value }: { label: string; value: string }): React.J
       <strong>{value}</strong>
     </div>
   );
-}
-
-function formatAgentState(state: string): string {
-  return toTitleWords(state.replace(/^AGENT_STATE_/, ''));
-}
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function formatCount(value: number): string {
-  return new Intl.NumberFormat('en-US').format(value);
-}
-
-function toTitleWords(value: string): string {
-  return value
-    .split('_')
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0) + segment.slice(1).toLowerCase())
-    .join(' ');
-}
-
-function statusTone(status: TaskStatusName): string {
-  switch (status) {
-    case 'TASK_STATUS_WORKING':
-      return 'info';
-    case 'TASK_STATUS_REVIEW':
-    case 'TASK_STATUS_MERGE_QUEUE':
-    case 'TASK_STATUS_RESOLVING':
-      return 'warn';
-    case 'TASK_STATUS_DONE':
-      return 'success';
-    case 'TASK_STATUS_PAUSED':
-    case 'TASK_STATUS_ARCHIVED':
-      return 'muted';
-    default:
-      return 'neutral';
-  }
-}
-
-function agentTone(state: string): string {
-  switch (state) {
-    case 'AGENT_STATE_EXECUTING':
-      return 'info';
-    case 'AGENT_STATE_REVIEW':
-    case 'AGENT_STATE_PLANNING':
-      return 'warn';
-    case 'AGENT_STATE_IDLE':
-      return 'success';
-    case 'AGENT_STATE_BLOCKED':
-    case 'AGENT_STATE_TERMINATED':
-      return 'muted';
-    default:
-      return 'neutral';
-  }
 }
