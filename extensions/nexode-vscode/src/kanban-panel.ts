@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 import type { WebviewToHostMessage } from '../webview/shared/types';
 import { DaemonClient } from './daemon-client';
+import { createMoveTaskCommand } from './kanban-commands';
 import { StateCache } from './state';
 import { configureWebview, createStateMessage } from './webview-support';
 
@@ -41,6 +42,10 @@ export class KanbanPanel implements vscode.Disposable {
 
     this.ready = false;
     this.panel = panel;
+    panel.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
+      void this.handleMessage(message);
+    });
+
     configureWebview(panel.webview, this.extensionUri, {
       bundleName: 'kanban',
       surface: 'macro-kanban',
@@ -50,10 +55,6 @@ export class KanbanPanel implements vscode.Disposable {
     panel.onDidDispose(() => {
       this.panel = undefined;
       this.ready = false;
-    });
-
-    panel.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
-      void this.handleMessage(message);
     });
   }
 
@@ -74,13 +75,7 @@ export class KanbanPanel implements vscode.Disposable {
     }
 
     try {
-      await this.client.dispatchCommand({
-        commandId: commandId(),
-        moveTask: {
-          taskId: message.taskId,
-          target: message.target,
-        },
-      });
+      await this.client.dispatchCommand(createMoveTaskCommand(message));
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Failed to dispatch Kanban move';
       void vscode.window.showErrorMessage(detail);
@@ -94,8 +89,4 @@ export class KanbanPanel implements vscode.Disposable {
 
     await this.panel.webview.postMessage(createStateMessage(this.state, 'macro-kanban'));
   }
-}
-
-function commandId(): string {
-  return `webview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }

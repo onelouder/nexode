@@ -27,6 +27,8 @@ export function createStateMessage(state: StateCache, surface: SurfaceKind): Hos
     surface,
     connection: state.getConnectionStatus(),
     snapshot: state.getSnapshot(),
+    agents: state.getAgentStates(),
+    metrics: state.getAggregateMetrics(),
     hasSnapshot: state.hasSnapshot(),
   };
 

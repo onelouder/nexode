@@ -1,11 +1,11 @@
 ---
-agent: pc
-claimed: 2026-03-19T08:05:00-07:00
+agent: gpt
+claimed: 2026-03-19T08:22:14-07:00
 status: handoff
-from: pc
-task: "Sprint 10 — React Webviews + Extension Tests (Tranche A review complete)"
-branch: "main"
-next: gpt
+from: gpt
+task: "Sprint 10 Tranche B — Webview Surface Shells complete"
+branch: "agent/gpt/sprint-10b-webview-shells"
+next: pc
 ---
 
 # HANDOFF.md
@@ -13,7 +13,48 @@ next: gpt
 > Last updated: 2026-03-19 by pc
 > Sprint 10 Tranche A review complete. Merged as PR #22 at `4bfe2ff`.
 
+> Last updated: 2026-03-19 by gpt
+
 ## Current Session (2026-03-19)
+
+Sprint 10 Tranche B is complete on `agent/gpt/sprint-10b-webview-shells` and is ready for `pc` review.
+
+Completed in this session:
+
+- added `StateCache` agent tracking (`AgentPresence`) with snapshot seeding, agent-state selectors, and aggregate metrics backed by the agent map
+- added shared join utilities in `extensions/nexode-vscode/src/view-models.ts` so Synapse Grid and Macro Kanban render joined task/slot/project data
+- upgraded Synapse Grid and sidebar shells to render live status, agent state, tokens, cost, and session metrics from `StateEnvelope`
+- upgraded Macro Kanban to render joined task cards with project/branch/cost data and HTML5 drag-and-drop column moves via `MoveTask`
+- extracted `createMoveTaskCommand` for Tier 1 coverage of webview message → daemon command mapping
+- fixed the webview ready-listener registration order in Synapse Grid, sidebar, and Kanban shells to remove the startup race noted in review F-01
+- kept the existing CSP intact; no inline-style relaxation was needed for drag-and-drop
+- extended the Tier 1 suite with selector tests, command-mapping tests, and additional `StateCache` agent-tracking coverage
+- verified:
+  - `npm run build`
+  - `npm run build:webview`
+  - `npm run check-types`
+  - `npm test`
+  - `cargo check --workspace`
+  - `cargo test --workspace`
+
+Outputs for review:
+
+- `extensions/nexode-vscode/src/state.ts`
+- `extensions/nexode-vscode/src/view-models.ts`
+- `extensions/nexode-vscode/src/kanban-commands.ts`
+- `extensions/nexode-vscode/src/synapse-grid-panel.ts`
+- `extensions/nexode-vscode/src/kanban-panel.ts`
+- `extensions/nexode-vscode/src/webview-support.ts`
+- `extensions/nexode-vscode/webview/shared/types.ts`
+- `extensions/nexode-vscode/webview/synapse-grid/App.tsx`
+- `extensions/nexode-vscode/webview/synapse-grid/styles.css`
+- `extensions/nexode-vscode/webview/kanban/App.tsx`
+- `extensions/nexode-vscode/webview/kanban/styles.css`
+- `extensions/nexode-vscode/test/state.test.ts`
+- `extensions/nexode-vscode/test/view-models.test.ts`
+- `extensions/nexode-vscode/test/kanban-commands.test.ts`
+
+## Previous Session (2026-03-19)
 
 Sprint 10 Tranche A review, merge, and handoff preparation for Tranche B.
 

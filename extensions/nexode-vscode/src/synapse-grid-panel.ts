@@ -39,6 +39,13 @@ export class SynapseGridPanel implements vscode.Disposable {
 
     this.ready = false;
     this.panel = panel;
+    panel.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
+      if (message.type === 'ready') {
+        this.ready = true;
+        void this.postState();
+      }
+    });
+
     configureWebview(panel.webview, this.extensionUri, {
       bundleName: 'synapse-grid',
       surface: 'synapse-grid',
@@ -48,13 +55,6 @@ export class SynapseGridPanel implements vscode.Disposable {
     panel.onDidDispose(() => {
       this.panel = undefined;
       this.ready = false;
-    });
-
-    panel.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
-      if (message.type === 'ready') {
-        this.ready = true;
-        void this.postState();
-      }
     });
   }
 
@@ -89,17 +89,17 @@ export class SynapseSidebarProvider implements vscode.WebviewViewProvider, vscod
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
     this.ready = false;
-    configureWebview(webviewView.webview, this.extensionUri, {
-      bundleName: 'synapse-grid',
-      surface: 'synapse-sidebar',
-      title: 'Nexode Synapse Sidebar',
-    });
-
     webviewView.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
       if (message.type === 'ready') {
         this.ready = true;
         void this.postState();
       }
+    });
+
+    configureWebview(webviewView.webview, this.extensionUri, {
+      bundleName: 'synapse-grid',
+      surface: 'synapse-sidebar',
+      title: 'Nexode Synapse Sidebar',
     });
 
     void this.postState();

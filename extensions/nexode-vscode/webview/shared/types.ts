@@ -1,10 +1,18 @@
-import type { ConnectionStatus, FullStateSnapshot, TaskStatusName } from '../../src/state';
+import type {
+  AgentPresence,
+  AggregateMetrics,
+  ConnectionStatus,
+  FullStateSnapshot,
+  TaskStatusName,
+} from '../../src/state';
 
 export type SurfaceKind = 'synapse-grid' | 'synapse-sidebar' | 'macro-kanban';
 
 export interface StateEnvelope {
   surface: SurfaceKind;
   snapshot: FullStateSnapshot;
+  agents: AgentPresence[];
+  metrics: AggregateMetrics;
   connection: ConnectionStatus;
   hasSnapshot: boolean;
 }

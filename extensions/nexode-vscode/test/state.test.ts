@@ -183,6 +183,8 @@ test('StateCache applies snapshot and event mutations', () => {
     }),
   );
 
+  assert.deepEqual(cache.getAgentsBySlot('slot-a'), []);
+
   cache.applyEvent(
     normalizeEvent({
       eventSequence: 8,
@@ -240,11 +242,107 @@ test('StateCache applies snapshot and event mutations', () => {
   assert.equal(cache.getProjects()[0]?.slots[0]?.currentAgentId, 'agent-9');
   assert.equal(cache.getProjects()[0]?.slots[0]?.totalTokens, 125);
   assert.equal(cache.getProjects()[0]?.currentCostUsd, 2.25);
+  assert.equal(cache.getAgentState('agent-7'), undefined);
+  assert.equal(cache.getAgentState('agent-9'), 'AGENT_STATE_UNSPECIFIED');
+  assert.deepEqual(cache.getAgentsBySlot('slot-a'), [
+    {
+      agentId: 'agent-9',
+      slotId: 'slot-a',
+      state: 'AGENT_STATE_UNSPECIFIED',
+    },
+  ]);
   assert.equal(cache.getAggregateMetrics().agentCount, 1);
   assert.equal(cache.getAggregateMetrics().totalTokens, 125);
   assert.equal(cache.getSnapshot().lastEventSequence, 12);
   assert.ok(changeCount >= 6);
 
   subscription.dispose();
+  cache.dispose();
+});
+
+test('StateCache preserves seeded agent state across snapshots', () => {
+  const cache = new StateCache();
+
+  cache.applySnapshot(
+    normalizeSnapshot({
+      projects: [
+        {
+          id: 'proj-a',
+          displayName: 'Project A',
+          repoPath: '/tmp/project-a',
+          color: '#00bcd4',
+          tags: [],
+          budgetMaxUsd: 25,
+          budgetWarnUsd: 10,
+          currentCostUsd: 1,
+          slots: [
+            {
+              id: 'slot-a',
+              projectId: 'proj-a',
+              task: 'Ship webview shell',
+              mode: 'AGENT_MODE_NORMAL',
+              branch: 'agent/slot-a',
+              currentAgentId: 'agent-1',
+              worktreeId: 'wt-a',
+              totalTokens: 100,
+              totalCostUsd: 0.42,
+            },
+          ],
+        },
+      ],
+      taskDag: [],
+      totalSessionCost: 1,
+      sessionBudgetMaxUsd: 25,
+      lastEventSequence: 1,
+    }),
+  );
+
+  assert.equal(cache.getAgentState('agent-1'), 'AGENT_STATE_UNSPECIFIED');
+
+  cache.applyEvent(
+    normalizeEvent({
+      eventSequence: 2,
+      agentStateChanged: {
+        agentId: 'agent-1',
+        newState: 'AGENT_STATE_EXECUTING',
+        slotId: 'slot-a',
+      },
+    }),
+  );
+  cache.applySnapshot(
+    normalizeSnapshot({
+      projects: [
+        {
+          id: 'proj-a',
+          displayName: 'Project A',
+          repoPath: '/tmp/project-a',
+          color: '#00bcd4',
+          tags: [],
+          budgetMaxUsd: 25,
+          budgetWarnUsd: 10,
+          currentCostUsd: 2,
+          slots: [
+            {
+              id: 'slot-a',
+              projectId: 'proj-a',
+              task: 'Ship webview shell',
+              mode: 'AGENT_MODE_NORMAL',
+              branch: 'agent/slot-a',
+              currentAgentId: 'agent-1',
+              worktreeId: 'wt-a',
+              totalTokens: 140,
+              totalCostUsd: 0.63,
+            },
+          ],
+        },
+      ],
+      taskDag: [],
+      totalSessionCost: 2,
+      sessionBudgetMaxUsd: 25,
+      lastEventSequence: 3,
+    }),
+  );
+
+  assert.equal(cache.getAgentState('agent-1'), 'AGENT_STATE_EXECUTING');
   cache.dispose();
 });

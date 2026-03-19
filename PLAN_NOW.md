@@ -2,13 +2,36 @@
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
-> Status: Ready for gpt to claim
+> Status: complete on `agent/gpt/sprint-10b-webview-shells`; ready for `pc` review
 > Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
 > Previous tranche: Sprint 10 Tranche A — PR #22, commit `4bfe2ff`
 
 ## Objective
 
 Build live state rendering into the Synapse Grid and Kanban webview shells. After this tranche, both surfaces display real daemon state and the Kanban supports column-move interactions.
+
+## Result
+
+Tranche B is complete and reviewable.
+
+- B-01 delivered: Synapse Grid and sidebar now render joined slot/task/project state, agent-state pills, token/cost metrics, and aggregate session metrics from `StateCache`
+- B-02 delivered: Macro Kanban now renders joined task cards with project/branch/cost data and supports drag-and-drop column moves through `MoveTask`
+- B-03 delivered: `StateCache` now tracks `AgentPresence` across snapshots and events and exposes agent selectors for the webviews
+- B-04 delivered: Tier 1 coverage now includes selector joins, move-command mapping, and additional agent-tracking tests
+- Review follow-up closed: F-01 ready-listener race fixed; F-03 branch/cost join implemented; F-09 avoided by keeping drag/drop styling class-based
+
+Verification completed successfully:
+
+```
+cd extensions/nexode-vscode
+npm run build
+npm run build:webview
+npm run check-types
+npm test
+cd ../..
+cargo check --workspace
+cargo test --workspace
+```
 
 ## Starting Point
 
@@ -104,6 +127,6 @@ cargo test --workspace  # Must still be 114+ tests
 When complete:
 1. Ensure all verification commands pass
 2. Update `CHANGELOG.md` with Sprint 10 Tranche B entry
-3. Commit to the same branch: `agent/gpt/sprint-10-react-webviews` (or a new branch if preferred)
+3. Commit to the working branch: `agent/gpt/sprint-10b-webview-shells`
 4. Update `HANDOFF.md` with completion status
 5. Do NOT merge — pc will review and merge

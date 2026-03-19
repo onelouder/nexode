@@ -57,9 +57,21 @@ body {
   margin: 0;
 }
 
+.header-copy {
+  display: grid;
+  gap: 12px;
+}
+
+.header-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .eyebrow,
 .task-id,
 .task-meta,
+.task-description,
 .filter span,
 .column-header span,
 .empty-copy {
@@ -81,6 +93,28 @@ body {
   padding: 10px 12px;
 }
 
+.metric-chip {
+  min-width: 120px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+}
+
+.metric-chip span,
+.chip,
+.task-details dt {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-chip strong {
+  display: block;
+  margin-top: 6px;
+}
+
 .column-strip {
   display: grid;
   grid-template-columns: repeat(8, minmax(220px, 1fr));
@@ -94,6 +128,12 @@ body {
   border-radius: 18px;
   min-height: 360px;
   padding: 14px;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.kanban-column.is-active-drop {
+  border-color: rgba(255, 191, 71, 0.45);
+  transform: translateY(-2px);
 }
 
 .column-header {
@@ -114,6 +154,11 @@ body {
   border-radius: 16px;
   padding: 12px;
   background: var(--panel-2);
+  cursor: grab;
+}
+
+.task-card.is-dragging {
+  opacity: 0.55;
 }
 
 .task-card h3 {
@@ -121,8 +166,75 @@ body {
   font-size: 15px;
 }
 
+.card-header,
+.card-chip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-description {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .task-meta {
   margin-top: 10px;
+}
+
+.card-chip-row {
+  margin-top: 12px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.chip[data-tone='info'] {
+  border-color: rgba(111, 214, 255, 0.4);
+  color: #8ddeff;
+}
+
+.chip[data-tone='warn'] {
+  border-color: rgba(255, 191, 71, 0.42);
+  color: var(--accent);
+}
+
+.chip[data-tone='success'] {
+  border-color: rgba(132, 223, 178, 0.4);
+  color: #9ee8bf;
+}
+
+.chip[data-tone='muted'] {
+  color: var(--muted);
+}
+
+.task-details {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.task-details div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-details dt,
+.task-details dd {
+  margin: 0;
 }
 
 @media (max-width: 720px) {
