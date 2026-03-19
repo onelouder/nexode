@@ -1,100 +1,77 @@
 ---
-agent: gpt
-claimed: 2026-03-19T08:22:14-07:00
+agent: pc
+claimed: 2026-03-19T09:02:00-07:00
 status: handoff
-from: gpt
-task: "Sprint 10 Tranche B — Webview Surface Shells complete"
-branch: "agent/gpt/sprint-10b-webview-shells"
-next: pc
+from: pc
+task: "Sprint 10 Tranche B review complete. Handoff for Tranche C."
+branch: "main"
+next: gpt
 ---
 
 # HANDOFF.md
 
 > Last updated: 2026-03-19 by pc
-> Sprint 10 Tranche A review complete. Merged as PR #22 at `4bfe2ff`.
-
-> Last updated: 2026-03-19 by gpt
+> Sprint 10 Tranche B review complete. Merged as PR #23 at `9b1a8a8`.
 
 ## Current Session (2026-03-19)
 
-Sprint 10 Tranche B is complete on `agent/gpt/sprint-10b-webview-shells` and is ready for `pc` review.
+Sprint 10 Tranche B review, merge, and handoff preparation for Tranche C.
 
 Completed in this session:
 
-- added `StateCache` agent tracking (`AgentPresence`) with snapshot seeding, agent-state selectors, and aggregate metrics backed by the agent map
-- added shared join utilities in `extensions/nexode-vscode/src/view-models.ts` so Synapse Grid and Macro Kanban render joined task/slot/project data
-- upgraded Synapse Grid and sidebar shells to render live status, agent state, tokens, cost, and session metrics from `StateEnvelope`
-- upgraded Macro Kanban to render joined task cards with project/branch/cost data and HTML5 drag-and-drop column moves via `MoveTask`
-- extracted `createMoveTaskCommand` for Tier 1 coverage of webview message → daemon command mapping
-- fixed the webview ready-listener registration order in Synapse Grid, sidebar, and Kanban shells to remove the startup race noted in review F-01
-- kept the existing CSP intact; no inline-style relaxation was needed for drag-and-drop
-- extended the Tier 1 suite with selector tests, command-mapping tests, and additional `StateCache` agent-tracking coverage
-- verified:
-  - `npm run build`
-  - `npm run build:webview`
-  - `npm run check-types`
-  - `npm test`
-  - `cargo check --workspace`
-  - `cargo test --workspace`
-
-Outputs for review:
-
-- `extensions/nexode-vscode/src/state.ts`
-- `extensions/nexode-vscode/src/view-models.ts`
-- `extensions/nexode-vscode/src/kanban-commands.ts`
-- `extensions/nexode-vscode/src/synapse-grid-panel.ts`
-- `extensions/nexode-vscode/src/kanban-panel.ts`
-- `extensions/nexode-vscode/src/webview-support.ts`
-- `extensions/nexode-vscode/webview/shared/types.ts`
-- `extensions/nexode-vscode/webview/synapse-grid/App.tsx`
-- `extensions/nexode-vscode/webview/synapse-grid/styles.css`
-- `extensions/nexode-vscode/webview/kanban/App.tsx`
-- `extensions/nexode-vscode/webview/kanban/styles.css`
-- `extensions/nexode-vscode/test/state.test.ts`
-- `extensions/nexode-vscode/test/view-models.test.ts`
-- `extensions/nexode-vscode/test/kanban-commands.test.ts`
-
-## Previous Session (2026-03-19)
-
-Sprint 10 Tranche A review, merge, and handoff preparation for Tranche B.
-
-Completed in this session:
-
-- reviewed all 24 changed files in Sprint 10 Tranche A (+2350/-33)
-- wrote formal review at `docs/reviews/sprint-10a-review.md` — APPROVED, no findings above Low
-- created PR #22 and squash-merged to main at `4bfe2ff`
-- updated `ISSUES.md`: R-011 downgraded from High to Medium (Tier 1 tests now present, Tier 2 still missing)
-- updated `ROADMAP.md`: Sprint 10 milestone split into Tranche A (complete) and Tranche B/C (pending) deliverables
-- wrote `PLAN_NOW.md` for Tranche B
-- updated `HANDOFF.md` for gpt to claim Tranche B
+- reviewed all 17 changed files in Sprint 10 Tranche B (+1086/-103)
+- wrote formal review at `docs/reviews/sprint-10b-review.md` — APPROVED, no findings above Low
+- created PR #23 and squash-merged to main at `9b1a8a8`
+- updated `ISSUES.md`: R-011 likelihood downgraded from Medium to Low (Tier 1 now ~11 test cases, Tier 2 still missing)
+- updated `ROADMAP.md`: Sprint 10 Tranche B deliverables checked off, Tranche C scope defined
+- wrote `PLAN_NOW.md` for Tranche C
+- updated `HANDOFF.md` for gpt to claim Tranche C
 
 Key review findings (all Low/Info, none blocking):
 
-- F-01: Minor race condition in sidebar `postReady` vs `onDidReceiveMessage` listener registration. Not exploitable in practice.
-- F-03: Kanban task cards don't show branch/cost (need TaskNode → AgentSlot join). Tranche B scope.
-- F-07: `MOVE_TARGETS` in commands.ts omits RESOLVING and DONE. Intentional per D-009/D-010 semantics.
-- F-09: CSP doesn't include `style-src 'unsafe-inline'`. Will matter if Tranche B adds inline styles for drag-and-drop.
+- F-01: Duplicate utility functions (formatCurrency, formatCount, toTitleWords, etc.) across Synapse Grid and Kanban webview components. Should be extracted to `webview/shared/format.ts` in Tranche C.
+- F-07: `view-models.test.ts` doesn't test the `projectFilter = 'all'` default path. Minor test gap.
+
+## Previous Sessions
+
+### 2026-03-19 (Tranche A)
+
+Sprint 10 Tranche A review, merge, and handoff preparation for Tranche B.
+
+- Reviewed 24 files (+2350/-33). APPROVED.
+- PR #22, merged at `4bfe2ff`.
+- R-011 downgraded from High to Medium.
+- Findings: F-01 ready-listener race (closed in Tranche B), F-03 branch/cost join (closed in Tranche B), F-09 CSP note (avoided in Tranche B).
+
+### 2026-03-19 (Tranche B — gpt)
+
+Sprint 10 Tranche B delivery on `agent/gpt/sprint-10b-webview-shells`.
+
+- Live Synapse Grid and Macro Kanban rendering via `view-models.ts` join layer.
+- HTML5 drag-and-drop for Kanban column moves via MoveTask dispatch.
+- `StateCache` agent tracking with `AgentPresence`, `seedAgents`, and agent selectors.
+- Tier 1 test expansion: 7 new test cases across 3 files.
+- All verification commands passed.
 
 ## Current State
 
-**Main branch:** `4bfe2ff` — Sprint 10 Tranche A: React Webview Infrastructure (#22)
+**Main branch:** `9b1a8a8` — Sprint 10 Tranche B: Live Webview Surfaces (#23)
 
-### What just shipped (Sprint 10 Tranche A)
+### What just shipped (Sprint 10 Tranche B)
 
-React webview infrastructure under `extensions/nexode-vscode/`. First React components in the workspace. Covers master-spec section 11 "Weeks 2-4" plumbing:
+Live state rendering for both React webview surfaces, drag-and-drop Kanban column moves, agent state tracking, and shared join utilities. All Tranche A review follow-ups closed.
 
-- Webview build pipeline (esbuild IIFE + browser target, minified React bundles)
-- `SynapseGridPanel`, `SynapseSidebarProvider`, `KanbanPanel` shell panels
-- Shared postMessage bridge (`webview/shared/bridge.ts`) with nonce-based CSP
-- React 18 entry points for both surfaces
-- `state.ts` decoupled from `vscode` namespace via `Emitter<T>` (555 → 734 lines)
-- Full Phase 3 observer event normalization (`UncertaintyFlag`, `WorktreeStatusChanged`, `ObserverAlert`)
-- D-012: MoveTask vs AssignTask command semantics
-- Tier 1 unit tests for state.ts (251 lines, 4 test cases via `tsx --test`)
+- `view-models.ts`: `buildSlotCardModels`, `buildKanbanCardModels` — data-projection layer between StateCache and React components
+- `kanban-commands.ts`: Extracted `createMoveTaskCommand` with injectable ID factory
+- `state.ts`: `AgentPresence` tracking, `seedAgents()` with event-state preservation, `getAgentStates()`, `getAgentState()`, `getAgentsBySlot()`
+- Synapse Grid: SlotCard component, status/agent/mode pills, metric header, sidebar pills
+- Macro Kanban: HTML5 drag-and-drop, joined task cards with branch/cost, project filter auto-reset
+- Ready-listener race fixed in all 3 panel/provider paths
+- CSP unchanged — drag/drop uses class-based styling
 
-Review: `docs/reviews/sprint-10a-review.md` — APPROVED, no findings above Low severity.
+Review: `docs/reviews/sprint-10b-review.md` — APPROVED, no findings above Low severity.
 
-### Codebase inventory (Sprints 0-10A)
+### Codebase inventory (Sprints 0-10B)
 
 | Component | Location | Language | Lines (approx) | Tests |
 |---|---|---|---|---|
@@ -102,8 +79,8 @@ Review: `docs/reviews/sprint-10a-review.md` — APPROVED, no findings above Low 
 | nexode-proto | `crates/nexode-proto/` | Proto/Rust | ~300 | 0 (generated) |
 | nexode-ctl | `crates/nexode-ctl/` | Rust | ~600 | 4 |
 | nexode-tui | `crates/nexode-tui/` | Rust | ~3000 | 34 (lib+bin) |
-| nexode-vscode | `extensions/nexode-vscode/` | TypeScript | ~2800 | 4 (state.test.ts) |
-| **Total** | | | ~14,700 | **118** |
+| nexode-vscode | `extensions/nexode-vscode/` | TypeScript | ~3900 | ~11 (state, view-models, kanban-commands) |
+| **Total** | | | ~15,800 | **~125** |
 
 ### Open Issues
 
@@ -120,13 +97,13 @@ Review: `docs/reviews/sprint-10a-review.md` — APPROVED, no findings above Low 
 | R-008 | High | VS Code Extension Host IPC bottleneck at N>3 |
 | R-009 | Medium | Semantic drift between concurrent agents |
 | R-010 | Medium | Agent CLI output format instability |
-| R-011 | Medium | VS Code extension: Tier 2 integration tests still missing |
+| R-011 | Low | VS Code extension: Tier 2 integration tests still missing |
 
-## For Tranche B Agent
+## For Tranche C Agent
 
-See `PLAN_NOW.md` for the Tranche B task definition. The infrastructure is solid. Focus on:
+See `PLAN_NOW.md` for the Tranche C task definition. The live rendering infrastructure and data-projection layer are solid. Focus on:
 
-1. Making the Synapse Grid and Kanban render live state from `StateCache`
-2. Adding the TaskNode → AgentSlot join so Kanban cards show branch and cost
-3. Getting drag-and-drop working for Kanban column moves (dispatch `MoveTask`)
-4. If CSP blocks inline styles for drag transforms, add `'unsafe-inline'` to `style-src` in `webview-support.ts`
+1. Synapse Grid view mode switcher (Flat View, Focus View) — the current implementation only renders Project Groups
+2. Extract shared formatters from `webview/synapse-grid/App.tsx` and `webview/kanban/App.tsx` into `webview/shared/format.ts` — 6 duplicate functions
+3. Observer alert rendering in the webviews (the normalization layer from Tranche A already provides the data)
+4. If time permits: rich per-cell presentation (spark-lines, progress bars)

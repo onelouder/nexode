@@ -340,11 +340,11 @@
 
 - **Source:** Sprint 9 review (2026-03-18), architecture assessment
 - **Module:** `extensions/nexode-vscode/`
-- **Likelihood:** Medium (downgraded from High)
+- **Likelihood:** Low (downgraded from Medium)
 - **Impact:** Medium (regressions in activation, TreeView rendering, command dispatch)
-- **Details:** The VS Code extension had zero test coverage at Sprint 9 ship. Sprint 10 Tranche A added Tier 1 unit tests for `state.ts` — 251 lines covering `normalizeSnapshot`, `normalizeEvent`, `normalizeCommandResponse`, coercion helpers, and `StateCache` mutations. The portable `Emitter<T>` class replaced `vscode.EventEmitter`, enabling testing without the extension host.
+- **Details:** The VS Code extension had zero test coverage at Sprint 9 ship. Sprint 10 Tranche A added Tier 1 unit tests for `state.ts` — 251 lines covering `normalizeSnapshot`, `normalizeEvent`, `normalizeCommandResponse`, coercion helpers, and `StateCache` mutations. Sprint 10 Tranche B expanded Tier 1 coverage with 7 additional test cases across 3 files: agent tracking lifecycle in `StateCache` (seed preservation across snapshots, swap cleanup), `view-models.ts` join logic (`buildSlotCardModels`, `buildKanbanCardModels`), and `kanban-commands.ts` command mapping. The extension now has ~11 Tier 1 test cases.
 - **Remaining gap:** Tier 2 extension host integration tests (activation lifecycle, TreeView rendering, WebviewPanel behavior) still not present. These require `@vscode/test-electron` or equivalent.
-- **Partial fix:** Sprint 10 Tranche A (2026-03-19), PR #22, commit `4bfe2ff`
+- **Partial fix:** Sprint 10 Tranche A (2026-03-19), PR #22, commit `4bfe2ff`; Tranche B (2026-03-19), PR #23, commit `9b1a8a8`
 - **When:** Tier 2 tests — Sprint 10 Tranche C or Sprint 11.
 
 ### R-010: Agent CLI output format instability (harness fragility)

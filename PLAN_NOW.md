@@ -1,111 +1,109 @@
-# PLAN_NOW.md — Sprint 10 Tranche B: Webview Surface Shells
+# PLAN_NOW.md — Sprint 10 Tranche C: Webview Polish + View Modes
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
-> Status: complete on `agent/gpt/sprint-10b-webview-shells`; ready for `pc` review
+> Status: ready for gpt to claim
 > Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
-> Previous tranche: Sprint 10 Tranche A — PR #22, commit `4bfe2ff`
+> Previous tranches: Tranche A — PR #22, commit `4bfe2ff`; Tranche B — PR #23, commit `9b1a8a8`
 
 ## Objective
 
-Build live state rendering into the Synapse Grid and Kanban webview shells. After this tranche, both surfaces display real daemon state and the Kanban supports column-move interactions.
-
-## Result
-
-Tranche B is complete and reviewable.
-
-- B-01 delivered: Synapse Grid and sidebar now render joined slot/task/project state, agent-state pills, token/cost metrics, and aggregate session metrics from `StateCache`
-- B-02 delivered: Macro Kanban now renders joined task cards with project/branch/cost data and supports drag-and-drop column moves through `MoveTask`
-- B-03 delivered: `StateCache` now tracks `AgentPresence` across snapshots and events and exposes agent selectors for the webviews
-- B-04 delivered: Tier 1 coverage now includes selector joins, move-command mapping, and additional agent-tracking tests
-- Review follow-up closed: F-01 ready-listener race fixed; F-03 branch/cost join implemented; F-09 avoided by keeping drag/drop styling class-based
-
-Verification completed successfully:
-
-```
-cd extensions/nexode-vscode
-npm run build
-npm run build:webview
-npm run check-types
-npm test
-cd ../..
-cargo check --workspace
-cargo test --workspace
-```
+Add Synapse Grid view mode switching, extract duplicated webview utilities, and render observer alerts in the webview surfaces. After this tranche, the Synapse Grid supports all three view modes from the spec, shared formatting code is deduplicated, and observer findings are visible in the UI.
 
 ## Starting Point
 
-Tranche A shipped:
-- Working webview build pipeline (`esbuild.mjs --target webview`)
-- Panel/provider shells: `SynapseGridPanel`, `SynapseSidebarProvider`, `KanbanPanel`
-- Shared postMessage bridge: `webview/shared/bridge.ts` + `types.ts`
-- React 18 entry points with `StateEnvelope` consumption
-- `state.ts` decoupled from VS Code namespace, Tier 1 tests present
-- D-012 semantics: column moves use `MoveTask`, not `AssignTask`
+Tranche B shipped:
+- Live rendering in both Synapse Grid and Macro Kanban via `view-models.ts` join layer
+- `StateCache` agent tracking with `AgentPresence`, selectors, and seed preservation
+- HTML5 drag-and-drop Kanban column moves via MoveTask dispatch
+- `SlotCard` component in Synapse Grid with status/agent/mode pills
+- Sidebar compressed slot list with pills and token counts
+- Metric headers in both surfaces showing agents, tokens, session cost
+- Nonce-based CSP intact (class-based drag/drop styling)
 
-The shells currently render basic project/slot/task data from `StateEnvelope` but lack:
-- TaskNode → AgentSlot join (cards miss branch + cost)
-- Interactive drag-and-drop for Kanban
-- Synapse Grid view modes (Flat View, Focus View)
-- Agent state tracking in StateCache
+The surfaces currently lack:
+- View mode switching (only Project Groups view exists)
+- Shared formatter utilities (6 functions duplicated across both React apps)
+- Observer alert display (normalization exists in state.ts but is not rendered)
+- Rich per-cell presentation (spark-lines, progress bars) — stretch goal
 
 ## Scope
 
-### B-01: Synapse Grid live rendering
+### C-01: Synapse Grid view modes
 
-**What:** Make the Synapse Grid surface render live state correctly.
+**What:** Add Flat View and Focus View to the Synapse Grid, with a mode switcher.
 
-- Join `TaskNode` with `AgentSlot` via matching IDs to display status, branch, cost per cell
-- Show agent state indicators per slot (requires adding `agents: Map<string, AgentStateName>` to `StateCache` — see Sprint 9 F-02)
-- Sidebar mode should show a compressed slot list with status + agent + token count
-- Metric header: update to show session cost, total tokens, agent count from `getAggregateMetrics()`
+The spec (sec-11) calls for three view modes:
+- **Project Groups** (current): slots grouped by project, one card per slot
+- **Flat View**: all slots in a single ungrouped list, sorted by status or activity
+- **Focus View**: filter to a single project, expanded card detail
 
-### B-02: Macro Kanban live rendering + column moves
+Implementation:
+- Add a `viewMode` state variable to `SynapseGridApp` (`'groups' | 'flat' | 'focus'`)
+- Add a mode switcher UI element in the Synapse Grid header (tabs or dropdown)
+- **Flat View**: render `slotCards` ungrouped as a flat grid, sorted by status priority (Working > Review > Merge Queue > Resolving > Pending > Paused > Archived > Done) or by most recent activity
+- **Focus View**: add a project selector. When a project is selected, render only that project's slots with expanded detail (show description, dependencies, full agent history if available)
+- Sidebar always uses the compressed slot list regardless of grid view mode
 
-**What:** Make the Kanban board interactive.
+### C-02: Shared webview formatter extraction
 
-- Task cards must show: title, assigned agent, project, branch, token cost (requires TaskNode → AgentSlot join from the snapshot data)
-- Implement drag-and-drop between columns. On drop, dispatch `{ type: 'moveTask', taskId, target }` via `postHostMessage`
-- Project filter dropdown is already wired; verify it works with live data
-- All 8 columns per D-009: Pending, Working, Review, Merge Queue, Resolving, Done, Paused, Archived
+**What:** Deduplicate utility functions from both React webview apps.
 
-**CSP note from review:** If drag-and-drop transforms require inline `style` attributes, update the CSP in `webview-support.ts` to add `'unsafe-inline'` to `style-src`. Or use CSS custom properties / classes to avoid inline styles entirely (preferred).
+Tranche B review F-01 identified 6 functions duplicated verbatim across `webview/synapse-grid/App.tsx` and `webview/kanban/App.tsx`:
+- `formatCurrency(value: number): string`
+- `formatCount(value: number): string`
+- `toTitleWords(value: string): string`
+- `formatAgentState(state: string): string`
+- `statusTone(status: TaskStatusName): string`
+- `agentTone(state: string): string`
 
-### B-03: StateCache agent state tracking
+Additional functions only in Synapse Grid that should also be shared:
+- `formatStatus(status: string): string`
+- `formatMode(mode: string): string`
 
-**What:** Add per-agent state tracking to `StateCache`.
+Extract all to `webview/shared/format.ts`. Update both React apps to import from the shared module. Add a test file `test/format.test.ts` for the pure formatter functions.
 
-- Add `private agents: Map<string, { state: AgentStateName; slotId: string }>` to `StateCache`
-- Update `applyEvent` to populate from `agentStateChanged` events
-- Expose `getAgentState(agentId)` and `getAgentsBySlot(slotId)` methods
-- Include agent state in `getSnapshot()` return if needed by webviews
-- Add Tier 1 tests for the new agent tracking logic
+### C-03: Observer alert rendering
 
-### B-04: Test coverage expansion
+**What:** Display observer findings (loop detection, uncertainty flags, sandbox violations) in the webview surfaces.
 
-**What:** Add tests for new Tranche B logic.
+Tranche A added full normalization for Phase 3 observer events in `state.ts`:
+- `UncertaintyFlagTriggeredEvent`
+- `WorktreeStatusChangedEvent`
+- `ObserverAlertEvent` (with `LoopDetected`, `SandboxViolation`, `UncertaintySignal` sub-types)
 
-- Test TaskNode → AgentSlot join logic (if extracted as a utility)
-- Test agent state tracking in StateCache
-- Test `MoveTaskMessage` dispatch from Kanban panel
-- Goal: maintain and expand the Tier 1 test suite that Tranche A established
+These are normalized and stored in events but not surfaced in the webviews. Implementation:
+- Add an `alerts: ObserverAlertEvent[]` field to `StateCache` (or a rolling buffer of recent alerts)
+- Include alerts in `createStateMessage` and `StateEnvelope`
+- Synapse Grid: show an alert badge on affected slot cards (e.g., a warning icon when an agent is loop-detected or paused due to uncertainty)
+- Kanban: show an alert indicator on affected task cards
+- Optional: a collapsible alert panel at the top of Synapse Grid showing recent observer findings with timestamps
 
-## Non-Goals for Tranche B
+### C-04: Test coverage expansion
 
-- Synapse Grid view mode switcher (Project Groups / Flat View / Focus View) — Tranche C
-- Rich per-cell presentation (spark-lines, progress bars) — Tranche C
-- Barrier-aware fan-out / webview acknowledgement — Tranche C
-- Tier 2 extension host tests — deferred
-- Chat Participant (`@nexode`) — Sprint 10+ scope
-- Merge Choreography TreeView — Sprint 10+ scope
+**What:** Add tests for new Tranche C logic.
+
+- Test shared formatter functions (formatCurrency, formatCount, toTitleWords, statusTone, agentTone)
+- Test Flat View and Focus View sorting/filtering logic if extracted as utilities
+- Test `buildKanbanCardModels` with `projectFilter = 'all'` (Tranche B review F-07)
+- Goal: maintain and expand the Tier 1 test suite
+
+## Non-Goals for Tranche C
+
+- Rich per-cell presentation (spark-lines, progress bars) — only if time permits after C-01 through C-04
+- Barrier-aware fan-out / webview acknowledgement — post-Sprint 10
+- Chat Participant (`@nexode`) — Sprint 11+ scope
+- Merge Choreography TreeView — Sprint 11+ scope
+- Tier 2 extension host tests — deferred (R-011)
 
 ## Constraints
 
 1. **No Rust changes.** TypeScript-only. `cargo test --workspace` must still pass (114 tests).
-2. **Webview security.** Maintain nonce-based CSP. If inline styles needed for drag-and-drop, update CSP narrowly.
+2. **Webview security.** Maintain nonce-based CSP. No `'unsafe-inline'` in `style-src`.
 3. **Bundle size.** Keep React + dependencies under 500KB gzipped.
 4. **TypeScript strict mode.** Do not relax `strict: true`.
 5. **D-012 compliance.** Column moves dispatch `MoveTask`. Agent assignment uses `AssignTask`. Do not conflate.
+6. **Shared code convention.** All new utility functions shared between surfaces go in `webview/shared/`. No new duplication.
 
 ## Verification
 
@@ -126,7 +124,7 @@ cargo test --workspace  # Must still be 114+ tests
 
 When complete:
 1. Ensure all verification commands pass
-2. Update `CHANGELOG.md` with Sprint 10 Tranche B entry
-3. Commit to the working branch: `agent/gpt/sprint-10b-webview-shells`
+2. Update `CHANGELOG.md` with Sprint 10 Tranche C entry
+3. Commit to the working branch: `agent/gpt/sprint-10c-<descriptive-suffix>`
 4. Update `HANDOFF.md` with completion status
 5. Do NOT merge — pc will review and merge
