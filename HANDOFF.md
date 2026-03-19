@@ -1,7 +1,79 @@
+---
+agent: gpt
+claimed: 2026-03-19T07:41:41-07:00
+status: handoff
+from: gpt
+task: "Sprint 10 — React Webviews + Extension Tests"
+branch: "agent/gpt/sprint-10-react-webviews"
+next: pc
+---
+
 # HANDOFF.md
 
-> Last updated: 2026-03-18 by pc
+> Last updated: 2026-03-19 by gpt
 > Sprint 9 review complete. Merged as PR #21 at `0c8cee4`.
+
+## Current Session (2026-03-19)
+
+Sprint 10 Tranche A is complete on this branch and ready for `pc` review before Tranche B UI work continues.
+
+Completed in this session:
+
+- normalized Sprint 10 scope in `PLAN_NOW.md` against `sec-05-synapse-telemetry-grid`, `sec-05-macro-kanban-board-task-queue`, `sec-11-week-1-grpc-bridge-state-cache`, `sec-11-weeks-2-4-multi-monitor-react-webviews`, D-005, D-009, and D-010
+- added D-012 to resolve Kanban `MoveTask` vs `AssignTask` semantics for Phase 3
+- turned the restored local extension WIP into a green plumbing tranche:
+  - separate webview build target with minified React bundles
+  - `SynapseGridPanel`, `SynapseSidebarProvider`, and `KanbanPanel` shells
+  - shared webview bridge and initial React entry points
+  - `state.ts` decoupled from VS Code runtime and extended for Phase 3 observer event normalization
+  - Tier 1 `state.ts` tests under `extensions/nexode-vscode/test/state.test.ts`
+
+Verification completed in this session:
+
+- `cd extensions/nexode-vscode && npm install`
+- `cd extensions/nexode-vscode && npm run build`
+- `cd extensions/nexode-vscode && npm run build:webview`
+- `cd extensions/nexode-vscode && npm run check-types`
+- `cd extensions/nexode-vscode && npm test`
+- `cargo check --workspace`
+- `cargo test --workspace`
+
+Primary output files:
+
+- `DECISIONS.md`
+- `PLAN_NOW.md`
+- `extensions/nexode-vscode/src/state.ts`
+- `extensions/nexode-vscode/src/extension.ts`
+- `extensions/nexode-vscode/src/commands.ts`
+- `extensions/nexode-vscode/src/webview-support.ts`
+- `extensions/nexode-vscode/src/synapse-grid-panel.ts`
+- `extensions/nexode-vscode/src/kanban-panel.ts`
+- `extensions/nexode-vscode/webview/`
+- `extensions/nexode-vscode/test/state.test.ts`
+
+Recommended next agent:
+
+- `pc` review and merge this Tranche A foundation work
+- after merge, `gpt` continue with Tranche B/C richer Synapse Grid and Kanban behavior
+
+## Overnight Checkpoint (2026-03-18)
+
+Sprint 10 implementation has not started yet. No extension or Rust source files were edited in this session; the intentional changes here are only the baton updates in `HANDOFF.md` and `PLAN_NOW.md`.
+
+This session only established the Sprint 10 baton and verified scope:
+
+- `PLAN_NOW.md` now marks Sprint 10 as the active branch context
+- `HANDOFF.md` now closes the session cleanly instead of leaving `status: claimed`
+- The next session should begin implementation from the existing Sprint 9 scaffold in `extensions/nexode-vscode/`
+- `git pull --rebase --autostash origin main` restored pre-existing local Sprint 10 WIP in `extensions/nexode-vscode/.vscodeignore`, `extensions/nexode-vscode/esbuild.mjs`, `extensions/nexode-vscode/package.json`, and `extensions/nexode-vscode/tsconfig.json`; those edits were not created or validated in this session and remain uncommitted
+
+### Recommended first actions tomorrow
+
+1. Add the webview build pipeline and package scripts
+2. Implement the Synapse Grid panel and React webview
+3. Implement the Macro Kanban panel and React webview
+4. Add Tier 1 unit tests for `src/state.ts`
+5. Run extension and workspace verification before handing off to `pc`
 
 ## Current State
 

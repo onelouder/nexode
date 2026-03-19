@@ -18,3 +18,4 @@
 - [2026-03-17] [gpt] Completed Sprint 7: hardened TUI reconnect behavior, command history/completion/status UX, help overlay, demo wait-for-DONE flow, and LoopDetected label parsing
 - [2026-03-17] [gpt] Completed Sprint 8: hardened observer slot/cooldown/path handling, added proto finding_kind support, rejected empty TOKENS telemetry, documented Claude permission flags, declared Rust 1.85 MSRV, and added daemon restart/reconnect integration coverage
 - [2026-03-18] [gpt] Added Sprint 9 `extensions/nexode-vscode`: VS Code extension scaffold, gRPC daemon client with reconnect, native project→slot TreeView, slot command palette actions, and connection/metrics status bar
+- [2026-03-19] [gpt] Normalized Sprint 10 Phase 3 planning, added the VS Code webview build pipeline and shell panels/sidebar, decoupled `state.ts` from the VS Code runtime, and added Tier 1 extension state tests

@@ -2,12 +2,63 @@
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
+> Status: Tranche A complete on `agent/gpt/sprint-10-react-webviews`; pending `pc` review, with Tranche B next
 > Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
 > Previous sprint: Sprint 9 (VS Code Extension Scaffold) — PR #21, commit `0c8cee4`
 
 ## Objective
 
 Build the two React WebviewPanels (Synapse Grid, Macro Kanban) and add test coverage for the extension. This covers master-spec section 11 "Weeks 2-4" plus the R-011 test gap identified in Sprint 9 review.
+
+## Checkpoint
+
+Sprint 10 now has a coherent, verified foundation tranche. The branch contains working webview build plumbing, registered panel/provider shells, normalized Phase 3 planning, and Tier 1 `state.ts` coverage. Rich UI behavior is still pending.
+
+## Normalized Scope
+
+Sprint 10 implementation is normalized to these authoritative references:
+
+- `sec-05-synapse-telemetry-grid`
+- `sec-05-macro-kanban-board-task-queue`
+- `sec-11-week-1-grpc-bridge-state-cache`
+- `sec-11-weeks-2-4-multi-monitor-react-webviews`
+- `REQ-P3-004`, `REQ-P3-005`, `REQ-P3-006`, `REQ-UX-011`, `REQ-UX-012`, `REQ-UX-013`, `REQ-UX-015`
+- D-005 (manual multi-monitor in Phase 3)
+- D-009 (Kanban state machine uses `MERGE_QUEUE` and `RESOLVING`)
+- D-010 (`RESOLVING` is present in Phase 3, with Git-conflict triggering now and AST-triggering deferred to Phase 4)
+
+Working interpretation for Sprint 10:
+
+1. The Synapse Grid and Macro Kanban remain Sprint 10 targets, but the sprint is delivered in implementation tranches instead of one oversized drop.
+2. Phase 3 multi-monitor behavior is manual only: panels may be popped out and dragged by the operator; there is no automatic monitor routing in Sprint 10.
+3. Kanban columns must match the accepted task state machine: `Pending`, `Working`, `Review`, `Merge Queue`, `Resolving`, `Done`, `Paused`, `Archived`.
+4. Column movement in the Kanban board dispatches `MoveTask`. `AssignTask` remains the command for explicit agent/slot assignment, not generic status-column changes.
+5. The webview transport must respect the Phase 3 EventBus direction: extension host owns `StateCache`, batches barrier-related updates, and fans out state to webviews over `postMessage`.
+6. Sprint 10 is not complete until the extension has both webview surfaces and at least Tier 1 TypeScript test coverage for `state.ts`.
+
+## Implementation Tranches
+
+### Tranche A (complete on this branch): Planning + Plumbing + Test Foundation
+
+- normalize the sprint plan against the accepted spec decisions
+- land a separate webview build target and basic extension registration for panel/provider shells
+- add missing webview entry points and shared bridge scaffolding
+- add Tier 1 tests for `src/state.ts`
+- restore green verification for `npm run build`, `npm run build:webview`, `npm run check-types`, and `npm test`
+
+### Tranche B (next): Webview Surface Shells
+
+- implement the Synapse Grid `WebviewPanel` and sidebar `WebviewViewProvider`
+- implement the Macro Kanban `WebviewPanel`
+- render live state snapshots from `StateCache` in both surfaces
+- support the normalized Kanban columns, including `RESOLVING`
+
+### Tranche C: Rich UI Behavior
+
+- Synapse Grid layout modes: Project Groups, Flat View, Focus View
+- richer per-cell presentation and sidebar compression
+- Kanban drag/drop interactions and project filtering
+- barrier-aware fan-out and webview acknowledgement handling consistent with `REQ-P3-004`
 
 ## Deliverables
 
@@ -21,6 +72,7 @@ The primary agent monitoring surface. A React app rendered in a VS Code WebviewP
 - Three view modes: Project Groups (default), Flat View, Focus View
 - Per-cell display: agent ID, task name, status indicator (color-coded), token count, cost
 - Sidebar mode: compressed vertical list in the VS Code sidebar
+- Maximized mode is a normal `WebviewPanel`; multi-monitor support is manual per D-005
 
 **Implementation guidance:**
 - Create `extensions/nexode-vscode/webview/` directory for React source
@@ -28,21 +80,23 @@ The primary agent monitoring surface. A React app rendered in a VS Code WebviewP
 - The WebviewPanel communicates with the extension host via `postMessage`/`onDidReceiveMessage`
 - The extension host sends state snapshots to the webview on each `StateCache.onDidChange`
 - Keep the webview bundle separate from the main extension bundle
+- Full completion target remains `REQ-P3-005`; Tranche A only needs the shell and bridge in place
 
 ### D-02: Macro Kanban WebviewPanel
 
 The task/DAG management surface. A React app in a second WebviewPanel.
 
 **Requirements (from spec section 5 + section 11):**
-- Full-screen DAG Kanban with columns: Pending, Working, Review, Merge Queue, Done, Paused, Archived
+- Full-screen DAG Kanban with columns: Pending, Working, Review, Merge Queue, Resolving, Done, Paused, Archived
 - Cards show: task title, assigned agent, worktree branch, token cost
-- Drag-and-drop to move tasks between columns (dispatches `MoveTask` command via postMessage)
+- Column drag-and-drop moves tasks between task-status columns via `MoveTask`
+- Explicit task-to-agent assignment, when present, uses `AssignTask`
 - Project filtering via dropdown
 
 **Implementation guidance:**
 - Reuse the postMessage bridge from D-01
-- Drag-and-drop: use `@dnd-kit/core` or HTML5 drag-and-drop (keep dependencies minimal)
-- On drop, send `{ type: 'moveTask', taskId, target }` to the extension host
+- Full sprint target should satisfy `REQ-P3-006`'s DAG/assignment surface expectations, but Tranche A/B may begin with a status-column board before richer DAG behavior lands
+- On status-column drop, send `{ type: 'moveTask', taskId, target }` to the extension host
 - Extension host dispatches via `DaemonClient.dispatchCommand()`
 
 ### D-03: Extension Test Harness (R-011)
@@ -55,6 +109,7 @@ Add test coverage for the TypeScript extension. Two tiers:
 - Test `normalizeCommandResponse` edge cases
 - Test `coerceString`, `coerceNumber`, `coerceEnum` edge cases
 - Test `StateCache.applySnapshot` and `applyEvent` state mutations
+- Include the Phase 3 observer/alert event shapes already present in `hypervisor.proto`
 - Runner: plain `mocha` or `vitest` (no VS Code extension host needed)
 
 **Tier 2: Extension host integration tests (VS Code test runner)**
@@ -73,6 +128,14 @@ Wire the remaining `HypervisorEvent` types to the extension:
 - Add observer alert entries to the TreeView or a new "Alerts" view
 
 This is a stretch goal. If time is constrained, skip D-04 and focus on D-01/D-02/D-03.
+
+## Non-Goals For Tranche A
+
+- automatic monitor assignment or any Phase 4 monitor orchestration
+- full `react-grid-layout` / `reactflow` performance tuning before the shells compile
+- VS Code Chat Participant work (`sec-11-weeks-5-6-native-vscode-integrations`)
+- Merge Choreography TreeView implementation
+- claiming Sprint 10 complete without a passing webview build and Tier 1 tests
 
 ## Constraints
 

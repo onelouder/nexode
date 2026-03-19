@@ -17,7 +17,10 @@
     "onCommand:nexode.pauseSlot",
     "onCommand:nexode.resumeSlot",
     "onCommand:nexode.moveTask",
-    "onView:nexodeSlots"
+    "onCommand:nexode.openSynapseGrid",
+    "onCommand:nexode.openKanban",
+    "onView:nexodeSlots",
+    "onView:nexodeSynapseSidebar"
   ],
   "contributes": {
     "viewsContainers": {
@@ -34,6 +37,11 @@
         {
           "id": "nexodeSlots",
           "name": "Slots"
+        },
+        {
+          "type": "webview",
+          "id": "nexodeSynapseSidebar",
+          "name": "Synapse Sidebar"
         }
       ]
     },
@@ -49,6 +57,14 @@
       {
         "command": "nexode.moveTask",
         "title": "Nexode: Move Task"
+      },
+      {
+        "command": "nexode.openSynapseGrid",
+        "title": "Nexode: Open Synapse Grid"
+      },
+      {
+        "command": "nexode.openKanban",
+        "title": "Nexode: Open Macro Kanban"
       }
     ],
     "configuration": {
@@ -70,19 +86,27 @@
     }
   },
   "scripts": {
-    "build": "node ./esbuild.mjs",
-    "watch": "node ./esbuild.mjs --watch",
+    "build": "node ./esbuild.mjs --target extension",
+    "build:webview": "node ./esbuild.mjs --target webview",
+    "watch": "node ./esbuild.mjs --target extension --watch",
+    "watch:webview": "node ./esbuild.mjs --target webview --watch",
     "check-types": "tsc --noEmit",
-    "vscode:prepublish": "npm run build"
+    "test": "tsx --test test/**/*.test.ts",
+    "vscode:prepublish": "npm run build && npm run build:webview"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",
-    "@grpc/proto-loader": "^0.8.0"
+    "@grpc/proto-loader": "^0.8.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.25.0",
+    "tsx": "^4.19.3",
     "typescript": "^5.8.0"
   }
 }

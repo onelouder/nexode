@@ -30,6 +30,8 @@ export function registerCommands(
   client: DaemonClient,
   state: StateCache,
   focusSlotsView: () => Thenable<void> | Promise<void>,
+  openSynapseGrid: () => Thenable<void> | Promise<void>,
+  openKanban: () => Thenable<void> | Promise<void>,
 ): vscode.Disposable[] {
   return [
     vscode.commands.registerCommand('nexode.pauseSlot', async () => {
@@ -85,6 +87,12 @@ export function registerCommands(
     }),
     vscode.commands.registerCommand('nexode.focusSlots', async () => {
       await focusSlotsView();
+    }),
+    vscode.commands.registerCommand('nexode.openSynapseGrid', async () => {
+      await openSynapseGrid();
+    }),
+    vscode.commands.registerCommand('nexode.openKanban', async () => {
+      await openKanban();
     }),
   ];
 }
