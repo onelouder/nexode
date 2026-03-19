@@ -346,3 +346,61 @@ test('StateCache preserves seeded agent state across snapshots', () => {
   assert.equal(cache.getAgentState('agent-1'), 'AGENT_STATE_EXECUTING');
   cache.dispose();
 });
+
+test('StateCache records recent observer alerts and uncertainty flags', () => {
+  const cache = new StateCache();
+
+  cache.applyEvent(
+    normalizeEvent({
+      eventId: 'evt-1',
+      timestampMs: 10,
+      eventSequence: 1,
+      observerAlert: {
+        slotId: 'slot-a',
+        agentId: 'agent-1',
+        sandboxViolation: {
+          path: '/tmp/outside',
+          reason: 'outside worktree',
+        },
+      },
+    }),
+  );
+  cache.applyEvent(
+    normalizeEvent({
+      eventId: 'evt-2',
+      timestampMs: 20,
+      eventSequence: 2,
+      uncertaintyFlag: {
+        agentId: 'agent-2',
+        taskId: 'slot-b',
+        reason: 'needs human input',
+      },
+    }),
+  );
+
+  assert.deepEqual(cache.getAlerts(), [
+    {
+      eventId: 'evt-2',
+      timestampMs: 20,
+      eventSequence: 2,
+      slotId: 'slot-b',
+      agentId: 'agent-2',
+      uncertaintySignal: {
+        reason: 'needs human input',
+      },
+    },
+    {
+      eventId: 'evt-1',
+      timestampMs: 10,
+      eventSequence: 1,
+      slotId: 'slot-a',
+      agentId: 'agent-1',
+      sandboxViolation: {
+        path: '/tmp/outside',
+        reason: 'outside worktree',
+      },
+    },
+  ]);
+
+  cache.dispose();
+});

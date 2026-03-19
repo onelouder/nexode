@@ -145,6 +145,12 @@ export interface ObserverAlertEvent {
   uncertaintySignal?: UncertaintySignal;
 }
 
+export interface RecentObserverAlert extends ObserverAlertEvent {
+  eventId: string;
+  timestampMs: number;
+  eventSequence: number;
+}
+
 export interface HypervisorEvent {
   eventId: string;
   timestampMs: number;
@@ -203,6 +209,7 @@ export type Event<T> = (listener: (event: T) => void) => DisposableLike;
 const DEFAULT_CONNECTION_STATUS: ConnectionStatus = {
   state: 'disconnected',
 };
+const MAX_RECENT_ALERTS = 20;
 
 const TASK_STATUSES: TaskStatusName[] = [
   'TASK_STATUS_UNSPECIFIED',
@@ -276,6 +283,7 @@ export class StateCache {
   private projects: Project[] = [];
   private taskDag: TaskNode[] = [];
   private agents = new Map<string, AgentPresence>();
+  private alerts: RecentObserverAlert[] = [];
   private totalSessionCost = 0;
   private sessionBudgetMaxUsd = 0;
   private lastEventSequence = 0;
@@ -374,6 +382,26 @@ export class StateCache {
       }
     }
 
+    if (event.observerAlert) {
+      this.pushAlert({
+        eventId: event.eventId,
+        timestampMs: event.timestampMs,
+        eventSequence: event.eventSequence,
+        ...event.observerAlert,
+      });
+    } else if (event.uncertaintyFlag) {
+      this.pushAlert({
+        eventId: event.eventId,
+        timestampMs: event.timestampMs,
+        eventSequence: event.eventSequence,
+        slotId: event.uncertaintyFlag.taskId,
+        agentId: event.uncertaintyFlag.agentId,
+        uncertaintySignal: {
+          reason: event.uncertaintyFlag.reason,
+        },
+      });
+    }
+
     this.changeEmitter.fire();
   }
 
@@ -405,6 +433,10 @@ export class StateCache {
 
   public getAgentStates(): AgentPresence[] {
     return [...this.agents.values()].map(cloneAgentPresence);
+  }
+
+  public getAlerts(): RecentObserverAlert[] {
+    return this.alerts.map(cloneRecentObserverAlert);
   }
 
   public getAgentState(agentId: string): AgentStateName | undefined {
@@ -472,6 +504,10 @@ export class StateCache {
 
   public getSessionBudgetMaxUsd(): number {
     return this.sessionBudgetMaxUsd;
+  }
+
+  private pushAlert(alert: RecentObserverAlert): void {
+    this.alerts = [cloneRecentObserverAlert(alert), ...this.alerts].slice(0, MAX_RECENT_ALERTS);
   }
 }
 
@@ -753,6 +789,16 @@ function cloneTaskNode(task: TaskNode): TaskNode {
 
 function cloneAgentPresence(agent: AgentPresence): AgentPresence {
   return { ...agent };
+}
+
+function cloneRecentObserverAlert(alert: RecentObserverAlert): RecentObserverAlert {
+  const { loopDetected, sandboxViolation, uncertaintySignal, ...base } = alert;
+  return {
+    ...base,
+    ...(loopDetected ? { loopDetected: { ...loopDetected } } : {}),
+    ...(sandboxViolation ? { sandboxViolation: { ...sandboxViolation } } : {}),
+    ...(uncertaintySignal ? { uncertaintySignal: { ...uncertaintySignal } } : {}),
+  };
 }
 
 function seedAgents(

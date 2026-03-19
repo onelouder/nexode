@@ -40,6 +40,8 @@ body {
 
 .hero,
 .project-card,
+.focus-panel,
+.alert-panel,
 .empty-state,
 .sidebar-item,
 .sidebar-header {
@@ -71,10 +73,19 @@ body {
   gap: 6px;
 }
 
+.hero-side,
+.hero-controls,
+.focus-select {
+  display: grid;
+  gap: 12px;
+}
+
 .hero-detail,
 .project-meta,
 .project-budget,
 .slot-summary,
+.slot-alert,
+.slot-description,
 .sidebar-copy,
 .sidebar-meta {
   margin: 0;
@@ -99,6 +110,37 @@ body {
   gap: 10px;
 }
 
+.view-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.view-switch,
+.focus-select select {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(7, 16, 28, 0.7);
+  color: var(--text);
+}
+
+.view-switch {
+  cursor: pointer;
+}
+
+.view-switch.is-active {
+  border-color: rgba(99, 210, 255, 0.42);
+  color: var(--accent);
+}
+
+.focus-select span {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .metric {
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -119,12 +161,16 @@ body {
   margin-top: 18px;
 }
 
-.project-card {
+.project-card,
+.focus-panel,
+.alert-panel {
   border-radius: 20px;
   padding: 18px;
 }
 
-.project-header {
+.project-header,
+.focus-header,
+.alert-panel-header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -148,6 +194,30 @@ body {
   margin-top: 16px;
 }
 
+.slot-grid-focus {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.alert-panel-header h2 {
+  margin: 0;
+}
+
+.alert-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.alert-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(7, 16, 28, 0.6);
+  padding: 14px;
+}
+
 .slot-card {
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -155,13 +225,28 @@ body {
   background: rgba(7, 16, 28, 0.7);
 }
 
+.slot-card.is-alerted {
+  border-color: rgba(255, 214, 102, 0.38);
+}
+
+.slot-card.is-expanded {
+  padding-bottom: 18px;
+}
+
 .slot-card-header,
 .pill-row,
-.sidebar-chip-row {
+.sidebar-chip-row,
+.alert-chip-row {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   align-items: center;
+}
+
+.pill-row,
+.sidebar-chip-row,
+.alert-chip-row {
+  flex-wrap: wrap;
 }
 
 .slot-card h3 {
@@ -199,6 +284,40 @@ body {
   color: var(--muted);
 }
 
+.slot-alert {
+  margin-top: 10px;
+}
+
+.slot-expanded {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.dependency-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dependency-chip,
+.alert-time {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dependency-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.slot-alert-list .alert-item {
+  padding: 12px;
+}
+
 .sidebar-header {
   border-radius: 18px;
   padding: 14px;
@@ -227,7 +346,8 @@ body {
 }
 
 .status-pill,
-.state-pill {
+.state-pill,
+.alert-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -248,20 +368,33 @@ body {
 }
 
 .status-pill[data-tone='warn'],
-.state-pill[data-tone='warn'] {
+.state-pill[data-tone='warn'],
+.alert-pill[data-tone='warn'] {
   border-color: rgba(255, 214, 102, 0.42);
   color: #ffd666;
 }
 
 .status-pill[data-tone='success'],
-.state-pill[data-tone='success'] {
+.state-pill[data-tone='success'],
+.alert-pill[data-tone='success'] {
   border-color: rgba(126, 240, 196, 0.42);
   color: var(--accent-2);
 }
 
 .status-pill[data-tone='muted'],
-.state-pill[data-tone='muted'] {
+.state-pill[data-tone='muted'],
+.alert-pill[data-tone='muted'] {
   color: var(--muted);
+}
+
+.alert-pill[data-tone='info'] {
+  border-color: rgba(99, 210, 255, 0.42);
+  color: var(--accent);
+}
+
+.alert-pill[data-tone='danger'] {
+  border-color: rgba(255, 110, 110, 0.4);
+  color: #ff9a9a;
 }
 
 .empty-state {
@@ -280,5 +413,12 @@ body {
 
   .hero-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-header,
+  .focus-header,
+  .alert-panel-header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

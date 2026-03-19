@@ -1,10 +1,28 @@
 import React, { useEffect, useState } from 'react';
 
-import { buildSlotCardModels, type SlotCardModel } from '../../src/view-models';
+import {
+  buildSlotCardModels,
+  sortSlotCardModelsForFlatView,
+  type SlotCardModel,
+} from '../../src/view-models';
 import { onHostMessage, postReady } from '../shared/bridge';
+import {
+  agentTone,
+  alertTone,
+  formatAgentState,
+  formatAlertKind,
+  formatAlertMessage,
+  formatAlertTime,
+  formatCount,
+  formatCurrency,
+  formatMode,
+  formatStatus,
+  statusTone,
+} from '../shared/format';
 import type { StateEnvelope } from '../shared/types';
 
 type SynapseSurface = 'synapse-grid' | 'synapse-sidebar';
+type GridViewMode = 'groups' | 'flat' | 'focus';
 
 const EMPTY_STATE: StateEnvelope = {
   surface: 'synapse-grid',
@@ -17,6 +35,7 @@ const EMPTY_STATE: StateEnvelope = {
     lastEventSequence: 0,
   },
   agents: [],
+  alerts: [],
   metrics: {
     agentCount: 0,
     totalTokens: 0,
@@ -30,6 +49,8 @@ export function SynapseGridApp({ surface }: { surface: SynapseSurface }): React.
     ...EMPTY_STATE,
     surface,
   });
+  const [viewMode, setViewMode] = useState<GridViewMode>('groups');
+  const [focusProjectId, setFocusProjectId] = useState('');
 
   useEffect(() => {
     const dispose = onHostMessage((message) => {
@@ -42,15 +63,51 @@ export function SynapseGridApp({ surface }: { surface: SynapseSurface }): React.
     return dispose;
   }, [surface]);
 
+  useEffect(() => {
+    if (surface !== 'synapse-grid' || viewMode !== 'focus') {
+      return;
+    }
+
+    const firstProjectId = state.snapshot.projects[0]?.id ?? '';
+    const hasProject = state.snapshot.projects.some((project) => project.id === focusProjectId);
+    if (!focusProjectId || !hasProject) {
+      setFocusProjectId(firstProjectId);
+    }
+  }, [focusProjectId, state.snapshot.projects, surface, viewMode]);
+
   if (surface === 'synapse-sidebar') {
     return <SynapseSidebar state={state} />;
   }
 
-  return <SynapseGrid state={state} />;
+  return (
+    <SynapseGrid
+      focusProjectId={focusProjectId}
+      onFocusProjectChange={setFocusProjectId}
+      onViewModeChange={setViewMode}
+      state={state}
+      viewMode={viewMode}
+    />
+  );
 }
 
-function SynapseGrid({ state }: { state: StateEnvelope }): React.JSX.Element {
-  const slotCards = buildSlotCardModels(state.snapshot, state.agents);
+function SynapseGrid({
+  state,
+  viewMode,
+  onViewModeChange,
+  focusProjectId,
+  onFocusProjectChange,
+}: {
+  state: StateEnvelope;
+  viewMode: GridViewMode;
+  onViewModeChange: (mode: GridViewMode) => void;
+  focusProjectId: string;
+  onFocusProjectChange: (projectId: string) => void;
+}): React.JSX.Element {
+  const slotCards = buildSlotCardModels(state.snapshot, state.agents, state.alerts);
+  const flatCards = sortSlotCardModelsForFlatView(slotCards);
+  const focusProject =
+    state.snapshot.projects.find((project) => project.id === focusProjectId) ?? state.snapshot.projects[0];
+  const focusCards = focusProject ? slotCards.filter((card) => card.project.id === focusProject.id) : [];
 
   return (
     <main className="surface surface-grid">
@@ -64,50 +121,56 @@ function SynapseGrid({ state }: { state: StateEnvelope }): React.JSX.Element {
               : 'Connected shell waiting for the first daemon snapshot'}
           </p>
         </div>
-        <div className="hero-metrics">
-          <Metric label="Connection" value={state.connection.state} />
-          <Metric label="Agents" value={String(state.metrics.agentCount)} />
-          <Metric label="Tokens" value={formatCount(state.metrics.totalTokens)} />
-          <Metric label="Session Cost" value={formatCurrency(state.metrics.totalSessionCost)} />
+        <div className="hero-side">
+          <div className="hero-metrics">
+            <Metric label="Connection" value={state.connection.state} />
+            <Metric label="Agents" value={String(state.metrics.agentCount)} />
+            <Metric label="Tokens" value={formatCount(state.metrics.totalTokens)} />
+            <Metric label="Session Cost" value={formatCurrency(state.metrics.totalSessionCost)} />
+          </div>
+          <div className="hero-controls">
+            <div className="view-switcher" role="tablist" aria-label="Synapse Grid view mode">
+              <ViewModeButton active={viewMode === 'groups'} label="Project Groups" onClick={() => onViewModeChange('groups')} />
+              <ViewModeButton active={viewMode === 'flat'} label="Flat View" onClick={() => onViewModeChange('flat')} />
+              <ViewModeButton active={viewMode === 'focus'} label="Focus View" onClick={() => onViewModeChange('focus')} />
+            </div>
+            {viewMode === 'focus' ? (
+              <label className="focus-select">
+                <span>Project</span>
+                <select
+                  onChange={(event) => onFocusProjectChange(event.target.value)}
+                  value={focusProject?.id ?? ''}
+                >
+                  {state.snapshot.projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </div>
         </div>
       </header>
 
-      <section className="project-list">
-        {state.snapshot.projects.length === 0 ? (
-          <EmptyState title="Waiting for daemon state" detail="The webview shell is wired. Live project state will appear here once the daemon publishes a snapshot." />
-        ) : (
-          state.snapshot.projects.map((project) => (
-            <article className="project-card" key={project.id}>
-              <header className="project-header">
-                <div>
-                  <p className="project-tag">{project.id}</p>
-                  <h2>{project.displayName}</h2>
-                  <p className="project-meta">{project.repoPath || 'Repository path unavailable'}</p>
-                </div>
-                <div className="project-summary">
-                  <p className="project-cost">{formatCurrency(project.currentCostUsd)}</p>
-                  <p className="project-budget">
-                    Budget {formatCurrency(project.budgetWarnUsd)} / {formatCurrency(project.budgetMaxUsd)}
-                  </p>
-                </div>
-              </header>
-              <div className="slot-grid">
-                {slotCards
-                  .filter((card) => card.project.id === project.id)
-                  .map((card) => (
-                    <SlotCard card={card} key={card.slot.id} />
-                  ))}
-              </div>
-            </article>
-          ))
-        )}
-      </section>
+      {state.alerts.length > 0 ? <RecentAlertsPanel state={state} /> : null}
+
+      {state.snapshot.projects.length === 0 ? (
+        <section className="project-list">
+          <EmptyState
+            title="Waiting for daemon state"
+            detail="The webview shell is wired. Live project state will appear here once the daemon publishes a snapshot."
+          />
+        </section>
+      ) : (
+        renderBody(viewMode, state, slotCards, flatCards, focusProject, focusCards)
+      )}
     </main>
   );
 }
 
 function SynapseSidebar({ state }: { state: StateEnvelope }): React.JSX.Element {
-  const slotCards = buildSlotCardModels(state.snapshot, state.agents);
+  const slotCards = buildSlotCardModels(state.snapshot, state.agents, state.alerts);
 
   return (
     <main className="surface surface-sidebar">
@@ -129,6 +192,11 @@ function SynapseSidebar({ state }: { state: StateEnvelope }): React.JSX.Element 
               </p>
             </div>
             <div className="sidebar-chip-row">
+              {card.alerts[0] ? (
+                <span className="alert-pill" data-tone={alertTone(card.alerts[0])}>
+                  {formatAlertKind(card.alerts[0])}
+                </span>
+              ) : null}
               <span className="status-pill" data-tone={statusTone(card.status)}>
                 {formatStatus(card.status)}
               </span>
@@ -146,9 +214,38 @@ function SynapseSidebar({ state }: { state: StateEnvelope }): React.JSX.Element 
   );
 }
 
-function SlotCard({ card }: { card: SlotCardModel }): React.JSX.Element {
+function ViewModeButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}): React.JSX.Element {
   return (
-    <section className="slot-card">
+    <button
+      aria-pressed={active}
+      className={`view-switch${active ? ' is-active' : ''}`}
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function SlotCard({
+  card,
+  expanded = false,
+}: {
+  card: SlotCardModel;
+  expanded?: boolean;
+}): React.JSX.Element {
+  const primaryAlert = card.alerts[0];
+
+  return (
+    <section className={`slot-card${expanded ? ' is-expanded' : ''}${card.alerts.length ? ' is-alerted' : ''}`}>
       <div className="slot-card-header">
         <p className="slot-id">{card.slot.id}</p>
         <span className="status-pill" data-tone={statusTone(card.status)}>
@@ -166,7 +263,13 @@ function SlotCard({ card }: { card: SlotCardModel }): React.JSX.Element {
         <span className="state-pill" data-tone="neutral">
           {formatMode(card.slot.mode)}
         </span>
+        {primaryAlert ? (
+          <span className="alert-pill" data-tone={alertTone(primaryAlert)}>
+            {formatAlertKind(primaryAlert)}
+          </span>
+        ) : null}
       </div>
+      {primaryAlert ? <p className="slot-alert">{formatAlertMessage(primaryAlert)}</p> : null}
       <dl>
         <div>
           <dt>Status</dt>
@@ -185,7 +288,38 @@ function SlotCard({ card }: { card: SlotCardModel }): React.JSX.Element {
           <dd>{card.slot.worktreeId || '-'}</dd>
         </div>
       </dl>
+      {expanded ? <ExpandedSlotDetails card={card} /> : null}
     </section>
+  );
+}
+
+function ExpandedSlotDetails({ card }: { card: SlotCardModel }): React.JSX.Element {
+  return (
+    <div className="slot-expanded">
+      {card.task?.description ? <p className="slot-description">{card.task.description}</p> : null}
+      {card.task?.dependencyIds.length ? (
+        <div className="dependency-list">
+          {card.task.dependencyIds.map((dependencyId) => (
+            <span className="dependency-chip" key={dependencyId}>
+              {dependencyId}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {card.alerts.length ? (
+        <div className="slot-alert-list">
+          {card.alerts.map((alert) => (
+            <article className="alert-item" key={`${alert.eventSequence}-${alert.slotId}`}>
+              <div>
+                <p className="slot-id">{formatAlertKind(alert)}</p>
+                <p className="slot-description">{formatAlertMessage(alert)}</p>
+              </div>
+              <span className="alert-time">{formatAlertTime(alert.timestampMs)}</span>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -207,70 +341,127 @@ function EmptyState({ title, detail }: { title: string; detail: string }): React
   );
 }
 
-function formatStatus(status: string): string {
-  return toTitleWords(status.replace(/^TASK_STATUS_/, ''));
+function RecentAlertsPanel({ state }: { state: StateEnvelope }): React.JSX.Element {
+  return (
+    <section className="alert-panel">
+      <header className="alert-panel-header">
+        <div>
+          <p className="eyebrow">Observer Alerts</p>
+          <h2>Recent findings</h2>
+        </div>
+        <p className="sidebar-copy">{state.alerts.length} recent alerts</p>
+      </header>
+      <div className="alert-list">
+        {state.alerts.slice(0, 5).map((alert) => (
+          <article className="alert-item" key={`${alert.eventSequence}-${alert.slotId}`}>
+            <div>
+              <div className="alert-chip-row">
+                <span className="alert-pill" data-tone={alertTone(alert)}>
+                  {formatAlertKind(alert)}
+                </span>
+                <span className="slot-id">{alert.slotId || 'unknown slot'}</span>
+              </div>
+              <p className="slot-description">{formatAlertMessage(alert)}</p>
+            </div>
+            <span className="alert-time">{formatAlertTime(alert.timestampMs)}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
-function formatAgentState(state: string): string {
-  return toTitleWords(state.replace(/^AGENT_STATE_/, ''));
-}
-
-function formatMode(mode: string): string {
-  return toTitleWords(mode.replace(/^AGENT_MODE_/, ''));
-}
-
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function formatCount(value: number): string {
-  return new Intl.NumberFormat('en-US').format(value);
-}
-
-function toTitleWords(value: string): string {
-  return value
-    .split('_')
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0) + segment.slice(1).toLowerCase())
-    .join(' ');
-}
-
-function statusTone(status: SlotCardModel['status']): string {
-  switch (status) {
-    case 'TASK_STATUS_WORKING':
-      return 'info';
-    case 'TASK_STATUS_REVIEW':
-    case 'TASK_STATUS_MERGE_QUEUE':
-    case 'TASK_STATUS_RESOLVING':
-      return 'warn';
-    case 'TASK_STATUS_DONE':
-      return 'success';
-    case 'TASK_STATUS_PAUSED':
-    case 'TASK_STATUS_ARCHIVED':
-      return 'muted';
-    default:
-      return 'neutral';
+function renderBody(
+  viewMode: GridViewMode,
+  state: StateEnvelope,
+  slotCards: SlotCardModel[],
+  flatCards: SlotCardModel[],
+  focusProject: StateEnvelope['snapshot']['projects'][number] | undefined,
+  focusCards: SlotCardModel[],
+): React.JSX.Element {
+  if (viewMode === 'flat') {
+    return (
+      <section className="project-list">
+        <section className="project-card">
+          <header className="project-header">
+            <div>
+              <p className="project-tag">all-projects</p>
+              <h2>Flat View</h2>
+              <p className="project-meta">All slots sorted by activity priority and alert density.</p>
+            </div>
+            <p className="project-cost">{formatCount(flatCards.length)} slots</p>
+          </header>
+          <div className="slot-grid slot-grid-flat">
+            {flatCards.map((card) => (
+              <SlotCard card={card} key={card.slot.id} />
+            ))}
+          </div>
+        </section>
+      </section>
+    );
   }
-}
 
-function agentTone(state: SlotCardModel['agentState']): string {
-  switch (state) {
-    case 'AGENT_STATE_EXECUTING':
-      return 'info';
-    case 'AGENT_STATE_REVIEW':
-    case 'AGENT_STATE_PLANNING':
-      return 'warn';
-    case 'AGENT_STATE_IDLE':
-      return 'success';
-    case 'AGENT_STATE_BLOCKED':
-    case 'AGENT_STATE_TERMINATED':
-      return 'muted';
-    default:
-      return 'neutral';
+  if (viewMode === 'focus') {
+    if (!focusProject) {
+      return (
+        <section className="project-list">
+          <EmptyState title="No project selected" detail="Select a project to enter Focus View." />
+        </section>
+      );
+    }
+
+    return (
+      <section className="project-list">
+        <section className="focus-panel">
+          <header className="focus-header">
+            <div>
+              <p className="project-tag">{focusProject.id}</p>
+              <h2>{focusProject.displayName}</h2>
+              <p className="project-meta">{focusProject.repoPath || 'Repository path unavailable'}</p>
+            </div>
+            <div className="project-summary">
+              <p className="project-cost">{formatCurrency(focusProject.currentCostUsd)}</p>
+              <p className="project-budget">
+                {focusCards.length} slots · {focusCards.reduce((total, card) => total + card.alerts.length, 0)} alerts
+              </p>
+            </div>
+          </header>
+          <div className="slot-grid slot-grid-focus">
+            {focusCards.map((card) => (
+              <SlotCard card={card} expanded key={card.slot.id} />
+            ))}
+          </div>
+        </section>
+      </section>
+    );
   }
+
+  return (
+    <section className="project-list">
+      {state.snapshot.projects.map((project) => (
+        <article className="project-card" key={project.id}>
+          <header className="project-header">
+            <div>
+              <p className="project-tag">{project.id}</p>
+              <h2>{project.displayName}</h2>
+              <p className="project-meta">{project.repoPath || 'Repository path unavailable'}</p>
+            </div>
+            <div className="project-summary">
+              <p className="project-cost">{formatCurrency(project.currentCostUsd)}</p>
+              <p className="project-budget">
+                Budget {formatCurrency(project.budgetWarnUsd)} / {formatCurrency(project.budgetMaxUsd)}
+              </p>
+            </div>
+          </header>
+          <div className="slot-grid">
+            {slotCards
+              .filter((card) => card.project.id === project.id)
+              .map((card) => (
+                <SlotCard card={card} key={card.slot.id} />
+              ))}
+          </div>
+        </article>
+      ))}
+    </section>
+  );
 }

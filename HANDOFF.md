@@ -1,31 +1,52 @@
 ---
-agent: pc
-claimed: 2026-03-19T09:02:00-07:00
+agent: gpt
+claimed: 2026-03-19T09:24:19-07:00
 status: handoff
-from: pc
-task: "Sprint 10 Tranche B review complete. Handoff for Tranche C."
-branch: "main"
-next: gpt
+from: gpt
+task: "Sprint 10 Tranche C complete. Ready for PC review."
+branch: "agent/gpt/sprint-10c-view-modes"
+next: pc
 ---
 
 # HANDOFF.md
 
-> Last updated: 2026-03-19 by pc
+> Last updated: 2026-03-19 by gpt
 > Sprint 10 Tranche B review complete. Merged as PR #23 at `9b1a8a8`.
 
 ## Current Session (2026-03-19)
 
-Sprint 10 Tranche B review, merge, and handoff preparation for Tranche C.
+Sprint 10 Tranche C is complete on `agent/gpt/sprint-10c-view-modes` and is ready for `pc` review.
 
 Completed in this session:
 
-- reviewed all 17 changed files in Sprint 10 Tranche B (+1086/-103)
-- wrote formal review at `docs/reviews/sprint-10b-review.md` — APPROVED, no findings above Low
-- created PR #23 and squash-merged to main at `9b1a8a8`
-- updated `ISSUES.md`: R-011 likelihood downgraded from Medium to Low (Tier 1 now ~11 test cases, Tier 2 still missing)
-- updated `ROADMAP.md`: Sprint 10 Tranche B deliverables checked off, Tranche C scope defined
-- wrote `PLAN_NOW.md` for Tranche C
-- updated `HANDOFF.md` for gpt to claim Tranche C
+- added Synapse Grid Project Groups, Flat View, and Focus View modes with header controls and focus-project selection
+- extracted shared formatter, tone, and alert-label helpers to `extensions/nexode-vscode/webview/shared/format.ts`
+- added rolling recent observer alert state to `StateCache` and included it in the host→webview `StateEnvelope`
+- joined observer alerts into both slot and kanban card view models and rendered alert badges/details in Synapse Grid, sidebar, and Macro Kanban
+- added flat-view sorting helpers and Focus View expanded slot detail with dependency and alert context
+- expanded Tier 1 coverage with shared formatter tests, recent-alert buffer tests, flat-view sorting tests, and the `projectFilter = 'all'` selector path
+- verified:
+  - `npm run build`
+  - `npm run build:webview`
+  - `npm run check-types`
+  - `npm test`
+  - `cargo check --workspace`
+  - `cargo test --workspace`
+
+Outputs for review:
+
+- `extensions/nexode-vscode/src/state.ts`
+- `extensions/nexode-vscode/src/view-models.ts`
+- `extensions/nexode-vscode/src/webview-support.ts`
+- `extensions/nexode-vscode/webview/shared/types.ts`
+- `extensions/nexode-vscode/webview/shared/format.ts`
+- `extensions/nexode-vscode/webview/synapse-grid/App.tsx`
+- `extensions/nexode-vscode/webview/synapse-grid/styles.css`
+- `extensions/nexode-vscode/webview/kanban/App.tsx`
+- `extensions/nexode-vscode/webview/kanban/styles.css`
+- `extensions/nexode-vscode/test/state.test.ts`
+- `extensions/nexode-vscode/test/view-models.test.ts`
+- `extensions/nexode-vscode/test/format.test.ts`
 
 Key review findings (all Low/Info, none blocking):
 
