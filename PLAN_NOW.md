@@ -1,132 +1,128 @@
-# PLAN_NOW.md — Sprint 10 Tranche C: Webview Polish + View Modes
+# PLAN_NOW.md — Sprint 11: Merge Choreography TreeView + Extension Polish
 
 > Owner: gpt (Codex)
 > Reviewer: pc (Perplexity Computer)
-> Status: complete on `agent/gpt/sprint-10c-view-modes`; ready for `pc` review
-> Spec reference: master-spec section 11 "Weeks 2-4: Multi-Monitor React Webviews"
-> Previous tranches: Tranche A — PR #22, commit `4bfe2ff`; Tranche B — PR #23, commit `9b1a8a8`
+> Status: ready for gpt
+> Spec reference: master-spec sec-11 "Weeks 2-4" (Merge Choreography) and "Weeks 5-8" (Polish)
+> Previous sprint: Sprint 10 — PRs #22, #23, #24 (commits `4bfe2ff`, `9b1a8a8`, `d13add7`)
 
 ## Objective
 
-Add Synapse Grid view mode switching, extract duplicated webview utilities, and render observer alerts in the webview surfaces. After this tranche, the Synapse Grid supports all three view modes from the spec, shared formatting code is deduplicated, and observer findings are visible in the UI.
+Deliver the Merge Choreography TreeView and extension polish. After this sprint, the VS Code extension covers all sec-11 deliverables except the Chat Participant (deferred to Sprint 12), and the extension is ready for settings configuration and basic onboarding.
 
-## Result
+## Why this scope
 
-Tranche C is complete and reviewable.
+Sprint 10 shipped all three React webview surfaces (Synapse Grid, Sidebar, Macro Kanban) with full live rendering, view modes, drag-and-drop, and observer alerts. The remaining sec-11 "Weeks 2-4" gap is the Merge Choreography TreeView — a native VS Code TreeView (not a React webview) that shows worktrees in REVIEW state with conflict risk and approve/reject actions.
 
-- C-01 delivered: Synapse Grid now supports Project Groups, Flat View, and Focus View, with flat-view priority sorting and expanded focus cards
-- C-02 delivered: duplicated formatter/tone helpers are extracted into `webview/shared/format.ts`, and both React surfaces now use the shared module
-- C-03 delivered: recent observer alerts are buffered in `StateCache`, included in `StateEnvelope`, joined into slot/task view models, and rendered in Synapse Grid, sidebar, and Macro Kanban
-- C-04 delivered: Tier 1 coverage now includes shared formatter tests, recent-alert buffer tests, flat-view sorting tests, and the `projectFilter = 'all'` default path
-- Stretch outcome: Focus View also surfaces dependency chips and recent alert detail without relaxing CSP
-
-Verification completed successfully:
-
-```
-cd extensions/nexode-vscode
-npm run build
-npm run build:webview
-npm run check-types
-npm test
-cd ../..
-cargo check --workspace
-cargo test --workspace
-```
+The Chat Participant (`@nexode`) is deferred to Sprint 12 because:
+- The VS Code Chat API requires careful prompt engineering and structured command parsing
+- It depends on a stable extension surface (all TreeViews, webviews, and settings in place)
+- Sprint 11 already has substantial scope with the TreeView + full polish pass
 
 ## Starting Point
 
-Tranche B shipped:
-- Live rendering in both Synapse Grid and Macro Kanban via `view-models.ts` join layer
-- `StateCache` agent tracking with `AgentPresence`, selectors, and seed preservation
-- HTML5 drag-and-drop Kanban column moves via MoveTask dispatch
-- `SlotCard` component in Synapse Grid with status/agent/mode pills
-- Sidebar compressed slot list with pills and token counts
-- Metric headers in both surfaces showing agents, tokens, session cost
-- Nonce-based CSP intact (class-based drag/drop styling)
+Sprint 10 shipped:
+- React webview pipeline: esbuild IIFE bundles, nonce-based CSP, postMessage bridge
+- Synapse Grid: Project Groups, Flat View, Focus View, slot cards, agent pills, observer alerts
+- Macro Kanban: live state, drag-and-drop column moves, project filter, alert badges
+- StateCache: full event normalization (Phase 3 observer events), agent tracking, rolling alert buffer
+- ~17 Tier 1 tests across 4 test files
+- Shared formatter library (`webview/shared/format.ts`)
 
-The surfaces currently lack:
-- View mode switching (only Project Groups view exists)
-- Shared formatter utilities (6 functions duplicated across both React apps)
-- Observer alert display (normalization exists in state.ts but is not rendered)
-- Rich per-cell presentation (spark-lines, progress bars) — stretch goal
+What's missing for sec-11 completion:
+- Merge Choreography TreeView (sec-11 "Weeks 2-4" — native TreeView, not a webview)
+- Settings page (session.yaml path, socket path, theme selection)
+- Extension README and onboarding walkthrough
+- Extension host integration tests (R-011 Tier 2 — stretch goal)
 
 ## Scope
 
-### C-01: Synapse Grid view modes
+### S11-01: Merge Choreography TreeView
 
-**What:** Add Flat View and Focus View to the Synapse Grid, with a mode switcher.
+**What:** A native VS Code TreeView registered in the AuxiliaryBar that visualizes the merge queue and worktrees in REVIEW state.
 
-The spec (sec-11) calls for three view modes:
-- **Project Groups** (current): slots grouped by project, one card per slot
-- **Flat View**: all slots in a single ungrouped list, sorted by status or activity
-- **Focus View**: filter to a single project, expanded card detail
+**Spec (sec-11):** "VS Code native TreeView (AuxiliaryBar). Shows worktrees in REVIEW state, conflict risk score, approve/reject actions."
 
-Implementation:
-- Add a `viewMode` state variable to `SynapseGridApp` (`'groups' | 'flat' | 'focus'`)
-- Add a mode switcher UI element in the Synapse Grid header (tabs or dropdown)
-- **Flat View**: render `slotCards` ungrouped as a flat grid, sorted by status priority (Working > Review > Merge Queue > Resolving > Pending > Paused > Archived > Done) or by most recent activity
-- **Focus View**: add a project selector. When a project is selected, render only that project's slots with expanded detail (show description, dependencies, full agent history if available)
-- Sidebar always uses the compressed slot list regardless of grid view mode
+**Implementation:**
 
-### C-02: Shared webview formatter extraction
+- Register a new `TreeDataProvider` in `extensions/nexode-vscode/src/merge-tree.ts`
+- Register the TreeView in `package.json` under `viewsContainers.activitybar` or `views` for the AuxiliaryBar
+- **Tree structure:**
+  - Root: one node per project with active merge queue entries
+  - Children: one node per slot in REVIEW or MERGE_QUEUE status
+  - Each node shows: slot ID, branch name, agent that produced the work, status (REVIEW / MERGE_QUEUE / RESOLVING)
+- **Conflict risk indicator:** Display a risk badge per slot. The risk can be computed from:
+  - Number of files changed (available from the last agent event or slot metadata)
+  - Whether other slots in the same project are also in REVIEW (concurrent merge risk)
+  - Simple heuristic is fine for Sprint 11 — the spec says "conflict risk score" but a Low/Medium/High label from a heuristic is acceptable. Full AST-based scoring is Phase 4 (sec-12).
+- **Actions (inline TreeView buttons):**
+  - **Approve → Merge Queue:** Dispatches a `MoveTask` command to transition slot from REVIEW → MERGE_QUEUE
+  - **Reject → Working:** Dispatches a `MoveTask` command to transition slot from REVIEW → WORKING (sends agent back to fix)
+  - **Pause:** Dispatches a `PauseSlot` command
+- **Live updates:** Subscribe to StateCache EventBus. Refresh the tree when slot status changes affect REVIEW/MERGE_QUEUE/RESOLVING states.
+- **Empty state:** When no slots are in REVIEW or MERGE_QUEUE, show a "No active merges" placeholder.
 
-**What:** Deduplicate utility functions from both React webview apps.
+### S11-02: Extension Settings Page
 
-Tranche B review F-01 identified 6 functions duplicated verbatim across `webview/synapse-grid/App.tsx` and `webview/kanban/App.tsx`:
-- `formatCurrency(value: number): string`
-- `formatCount(value: number): string`
-- `toTitleWords(value: string): string`
-- `formatAgentState(state: string): string`
-- `statusTone(status: TaskStatusName): string`
-- `agentTone(state: string): string`
+**What:** VS Code settings for configuring the Nexode extension.
 
-Additional functions only in Synapse Grid that should also be shared:
-- `formatStatus(status: string): string`
-- `formatMode(mode: string): string`
+**Spec (sec-11 Weeks 5-8):** "Settings page (session.yaml path, socket path, theme)."
 
-Extract all to `webview/shared/format.ts`. Update both React apps to import from the shared module. Add a test file `test/format.test.ts` for the pure formatter functions.
+**Implementation:**
 
-### C-03: Observer alert rendering
+- Add `contributes.configuration` entries in `package.json`:
+  - `nexode.sessionPath`: Path to `session.yaml` (string, default: `.nexode/session.yaml`)
+  - `nexode.daemonHost`: Daemon gRPC host (string, default: `localhost`) — already exists, verify
+  - `nexode.daemonPort`: Daemon gRPC port (number, default: `50051`) — already exists, verify
+  - `nexode.socketPath`: Unix socket path (string, default: empty — uses host:port when empty)
+  - `nexode.theme`: UI theme preference (`'auto' | 'synapse-dark' | 'synapse-light'`, default: `'auto'`)
+  - `nexode.showStatusBar`: Toggle Status Bar HUD visibility (boolean, default: `true`)
+- Ensure live reload works for connection settings (host/port/socket changes trigger reconnect)
+- Settings should appear in the VS Code Settings UI under a "Nexode" section
 
-**What:** Display observer findings (loop detection, uncertainty flags, sandbox violations) in the webview surfaces.
+### S11-03: Extension README + Onboarding
 
-Tranche A added full normalization for Phase 3 observer events in `state.ts`:
-- `UncertaintyFlagTriggeredEvent`
-- `WorktreeStatusChangedEvent`
-- `ObserverAlertEvent` (with `LoopDetected`, `SandboxViolation`, `UncertaintySignal` sub-types)
+**What:** User-facing documentation and a lightweight onboarding walkthrough.
 
-These are normalized and stored in events but not surfaced in the webviews. Implementation:
-- Add an `alerts: ObserverAlertEvent[]` field to `StateCache` (or a rolling buffer of recent alerts)
-- Include alerts in `createStateMessage` and `StateEnvelope`
-- Synapse Grid: show an alert badge on affected slot cards (e.g., a warning icon when an agent is loop-detected or paused due to uncertainty)
-- Kanban: show an alert indicator on affected task cards
-- Optional: a collapsible alert panel at the top of Synapse Grid showing recent observer findings with timestamps
+**Implementation:**
 
-### C-04: Test coverage expansion
+- **README.md** for the extension (`extensions/nexode-vscode/README.md`):
+  - Overview: what Nexode is, what the extension does
+  - Prerequisites: Rust daemon running, session.yaml configured
+  - Installation: from VSIX or marketplace (placeholder)
+  - Configuration: list of settings with defaults
+  - Features: screenshots/descriptions of Synapse Grid, Kanban, Merge TreeView, Status Bar
+  - Commands: list of command palette commands
+  - Troubleshooting: common issues (daemon not running, connection refused, etc.)
+- **Onboarding walkthrough** (optional, stretch):
+  - Register a `walkthroughs` contribution in `package.json`
+  - Steps: Install daemon → Configure session.yaml → Connect extension → Explore Synapse Grid
+  - Each step opens the relevant view or setting
 
-**What:** Add tests for new Tranche C logic.
+### S11-04: Test Coverage Expansion
 
-- Test shared formatter functions (formatCurrency, formatCount, toTitleWords, statusTone, agentTone)
-- Test Flat View and Focus View sorting/filtering logic if extracted as utilities
-- Test `buildKanbanCardModels` with `projectFilter = 'all'` (Tranche B review F-07)
-- Goal: maintain and expand the Tier 1 test suite
+**What:** Extend Tier 1 tests and optionally begin Tier 2.
 
-## Non-Goals for Tranche C
+- Test `MergeTreeDataProvider`: tree structure generation from StateCache data, refresh on state change, conflict risk calculation
+- Test settings validation: verify defaults, live reload behavior
+- **Stretch — Tier 2 (R-011):** If time permits, set up `@vscode/test-electron` infrastructure and add at least one activation lifecycle test. This would partially close R-011.
 
-- Rich per-cell presentation (spark-lines, progress bars) — only if time permits after C-01 through C-04
-- Barrier-aware fan-out / webview acknowledgement — post-Sprint 10
-- Chat Participant (`@nexode`) — Sprint 11+ scope
-- Merge Choreography TreeView — Sprint 11+ scope
-- Tier 2 extension host tests — deferred (R-011)
+## Non-Goals for Sprint 11
+
+- Chat Participant (`@nexode`) — deferred to Sprint 12
+- Rich per-cell presentation (spark-lines, progress bars) — deferred
+- Full AST-based conflict risk scoring — that's Phase 4 (sec-12). Sprint 11 uses heuristic risk.
+- QG-1 score gate integration — backlog
+- Tier 2 tests are stretch only — not a hard deliverable
 
 ## Constraints
 
 1. **No Rust changes.** TypeScript-only. `cargo test --workspace` must still pass (114 tests).
-2. **Webview security.** Maintain nonce-based CSP. No `'unsafe-inline'` in `style-src`.
-3. **Bundle size.** Keep React + dependencies under 500KB gzipped.
+2. **Native TreeView for Merge Choreography.** This is NOT a React webview — it uses the VS Code TreeView API (`vscode.TreeDataProvider`). This is per the spec.
+3. **Webview security.** Maintain nonce-based CSP. No `'unsafe-inline'` in `style-src`.
 4. **TypeScript strict mode.** Do not relax `strict: true`.
 5. **D-012 compliance.** Column moves dispatch `MoveTask`. Agent assignment uses `AssignTask`. Do not conflate.
-6. **Shared code convention.** All new utility functions shared between surfaces go in `webview/shared/`. No new duplication.
+6. **Shared code convention.** Utilities shared between extension host and webviews go in `webview/shared/`. Extension-host-only code stays in `src/`.
 
 ## Verification
 
@@ -147,7 +143,7 @@ cargo test --workspace  # Must still be 114+ tests
 
 When complete:
 1. Ensure all verification commands pass
-2. Update `CHANGELOG.md` with Sprint 10 Tranche C entry
-3. Commit to the working branch: `agent/gpt/sprint-10c-<descriptive-suffix>`
+2. Update `CHANGELOG.md` with Sprint 11 entry
+3. Commit to a working branch: `agent/gpt/sprint-11-merge-tree-polish`
 4. Update `HANDOFF.md` with completion status
 5. Do NOT merge — pc will review and merge

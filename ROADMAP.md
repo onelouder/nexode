@@ -156,11 +156,11 @@
   - [x] Configuration settings: daemonHost, daemonPort with live reload
   - [x] Build tooling: esbuild bundler, TypeScript strict mode, runtime proto loading
 
-### M3b-next: Sprint 10 — React Webviews + Extension Tests ⏳
-- **Target:** TBD
-- **Status:** Tranches A+B complete. Tranche C pending.
+### M3b-next: Sprint 10 — React Webviews + Extension Tests ✅
+- **Target:** 2026-05-10
+- **Status:** Complete (Tranches A+B+C merged 2026-03-19)
 - **Agent:** gpt (Codex)
-- **Reviews:** `docs/reviews/sprint-10a-review.md`, `docs/reviews/sprint-10b-review.md`
+- **Reviews:** `docs/reviews/sprint-10a-review.md`, `docs/reviews/sprint-10b-review.md`, `docs/reviews/sprint-10c-review.md`
 - **Tranche A Deliverables (complete — PR #22, commit `4bfe2ff`):**
   - [x] Webview build pipeline (esbuild, IIFE + browser target, minified React bundles)
   - [x] SynapseGridPanel, SynapseSidebarProvider, KanbanPanel shells
@@ -177,13 +177,33 @@
   - [x] StateCache agent tracking (AgentPresence, seedAgents, agent selectors)
   - [x] Tier 1 test expansion (+7 test cases across 3 files, ~11 total)
   - [x] Tranche A review follow-ups closed (F-01 race fix, F-03 join, F-09 CSP preserved)
-- **Tranche C Deliverables (pending):**
-  - [ ] Synapse Grid: Flat View, Focus View mode switcher
-  - [ ] Shared webview formatter extraction (eliminate duplicate utility functions)
-  - [ ] Observer alert display in webviews/notifications
+- **Tranche C Deliverables (complete — PR #24, commit `d13add7`):**
+  - [x] Synapse Grid: Project Groups, Flat View, Focus View mode switcher
+  - [x] Shared webview formatter extraction (`webview/shared/format.ts`, 12 functions)
+  - [x] Observer alert rendering (StateCache buffer, alert pills, RecentAlertsPanel)
+  - [x] Tier 1 test expansion (+6 test cases, ~17 total across 4 files)
+  - [x] Tranche B review follow-ups closed (F-01 formatter duplication, F-07 all-filter test)
+- **Deferred to Sprint 11+:**
   - [ ] Rich per-cell presentation (spark-lines, progress bars)
-  - [ ] Extension host integration tests (Tier 2, if feasible)
+  - [ ] Extension host integration tests (Tier 2, R-011)
   - [ ] R-008 mitigation: bypass Extension Host for agent data streams
+
+### M3c: Sprint 11 — Merge Choreography TreeView + Extension Polish ⏳
+- **Target:** 2026-05-17
+- **Status:** Ready for gpt
+- **Agent:** gpt (Codex)
+- **Spec ref:** sec-11 "Weeks 2-4" (Merge Choreography), "Weeks 5-8" (Polish)
+- **Deliverables:**
+  - [ ] Merge Choreography TreeView (native VS Code TreeView in AuxiliaryBar)
+  - [ ] Conflict risk heuristic (file count + concurrent REVIEW slots)
+  - [ ] Approve/Reject/Pause inline TreeView actions
+  - [ ] Extension settings (session.yaml path, socket path, theme)
+  - [ ] Extension README + onboarding walkthrough
+  - [ ] Tier 1 tests for MergeTreeDataProvider and settings
+  - [ ] Stretch: Tier 2 extension host tests (R-011)
+- **Deferred to Sprint 12:**
+  - [ ] Chat Participant (`@nexode`) — VS Code Chat API integration
+  - [ ] Release candidate preparation
 
 ### M4: Phase 3 — Multi-Project Orchestration ⏳
 - **Target:** TBD

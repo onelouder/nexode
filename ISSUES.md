@@ -342,10 +342,10 @@
 - **Module:** `extensions/nexode-vscode/`
 - **Likelihood:** Low (downgraded from Medium)
 - **Impact:** Medium (regressions in activation, TreeView rendering, command dispatch)
-- **Details:** The VS Code extension had zero test coverage at Sprint 9 ship. Sprint 10 Tranche A added Tier 1 unit tests for `state.ts` — 251 lines covering `normalizeSnapshot`, `normalizeEvent`, `normalizeCommandResponse`, coercion helpers, and `StateCache` mutations. Sprint 10 Tranche B expanded Tier 1 coverage with 7 additional test cases across 3 files: agent tracking lifecycle in `StateCache` (seed preservation across snapshots, swap cleanup), `view-models.ts` join logic (`buildSlotCardModels`, `buildKanbanCardModels`), and `kanban-commands.ts` command mapping. The extension now has ~11 Tier 1 test cases.
+- **Details:** The VS Code extension had zero test coverage at Sprint 9 ship. Sprint 10 added Tier 1 coverage across three tranches: Tranche A added state normalization and StateCache mutation tests (4 cases); Tranche B added agent tracking, view-model joins, and command mapping tests (7 cases); Tranche C added shared formatter tests, observer alert buffer tests, flat-view sort tests, and the `projectFilter = 'all'` path (6 cases). The extension now has ~17 Tier 1 test cases across 4 files (`state.test.ts`, `view-models.test.ts`, `kanban-commands.test.ts`, `format.test.ts`).
 - **Remaining gap:** Tier 2 extension host integration tests (activation lifecycle, TreeView rendering, WebviewPanel behavior) still not present. These require `@vscode/test-electron` or equivalent.
-- **Partial fix:** Sprint 10 Tranche A (2026-03-19), PR #22, commit `4bfe2ff`; Tranche B (2026-03-19), PR #23, commit `9b1a8a8`
-- **When:** Tier 2 tests — Sprint 10 Tranche C or Sprint 11.
+- **Partial fix:** Sprint 10 (2026-03-19): Tranche A PR #22 `4bfe2ff`, Tranche B PR #23 `9b1a8a8`, Tranche C PR #24 `d13add7`
+- **When:** Tier 2 tests — Sprint 11.
 
 ### R-010: Agent CLI output format instability (harness fragility)
 
