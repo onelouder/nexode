@@ -124,7 +124,19 @@ message HypervisorEvent {
     SlotAgentSwapped slot_agent_swapped = 10;
     ObserverAlert observer_alert = 12;
     AgentOutputLine agent_output_line = 13;
+    VerificationResult verification_result = 14;
   }
+}
+
+message VerificationResult {
+  string slot_id = 1;
+  string project_id = 2;
+  bool success = 3;
+  string step = 4;
+  string command = 5;
+  int32 status_code = 6;
+  string stdout = 7;
+  string stderr = 8;
 }
 
 message AgentOutputLine {

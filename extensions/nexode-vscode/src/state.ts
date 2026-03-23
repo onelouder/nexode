@@ -46,6 +46,17 @@ export interface AgentOutputLine {
   timestampMs: number;
 }
 
+export interface VerificationResultEvent {
+  slotId: string;
+  projectId: string;
+  success: boolean;
+  step: string;
+  command: string;
+  statusCode: number;
+  stdout: string;
+  stderr: string;
+}
+
 export interface Project {
   id: string;
   displayName: string;
@@ -174,6 +185,7 @@ export interface HypervisorEvent {
   slotAgentSwapped?: SlotAgentSwappedEvent;
   observerAlert?: ObserverAlertEvent;
   agentOutputLine?: AgentOutputLine;
+  verificationResult?: VerificationResultEvent;
   payload?: string;
 }
 
@@ -297,6 +309,7 @@ export class StateCache {
   private totalSessionCost = 0;
   private sessionBudgetMaxUsd = 0;
   private lastEventSequence = 0;
+  private verificationResults = new Map<string, VerificationResultEvent>();
   private connectionStatus: ConnectionStatus = DEFAULT_CONNECTION_STATUS;
 
   public readonly onDidChange = this.changeEmitter.event;
@@ -325,6 +338,9 @@ export class StateCache {
         if (event.taskStatusChanged.agentId) {
           task.assignedAgentId = event.taskStatusChanged.agentId;
         }
+      }
+      if (event.taskStatusChanged.newStatus === 'TASK_STATUS_WORKING') {
+        this.verificationResults.delete(event.taskStatusChanged.taskId);
       }
     }
 
@@ -390,6 +406,10 @@ export class StateCache {
       if (previousAgentId && previousAgentId !== event.agentStateChanged.agentId) {
         this.agents.delete(previousAgentId);
       }
+    }
+
+    if (event.verificationResult) {
+      this.verificationResults.set(event.verificationResult.slotId, event.verificationResult);
     }
 
     if (event.observerAlert) {
@@ -516,6 +536,14 @@ export class StateCache {
     return this.sessionBudgetMaxUsd;
   }
 
+  public getVerificationResult(slotId: string): VerificationResultEvent | undefined {
+    return this.verificationResults.get(slotId);
+  }
+
+  public getVerificationResults(): Map<string, VerificationResultEvent> {
+    return new Map(this.verificationResults);
+  }
+
   private pushAlert(alert: RecentObserverAlert): void {
     this.alerts = [cloneRecentObserverAlert(alert), ...this.alerts].slice(0, MAX_RECENT_ALERTS);
   }
@@ -546,6 +574,7 @@ export function normalizeEvent(raw: Record<string, unknown> | undefined): Hyperv
     slotAgentSwapped: normalizeSlotAgentSwapped(raw?.slotAgentSwapped),
     observerAlert: normalizeObserverAlert(raw?.observerAlert),
     agentOutputLine: normalizeAgentOutputLine(raw?.agentOutputLine),
+    verificationResult: normalizeVerificationResult(raw?.verificationResult),
     payload: coerceString(raw?.payload),
   };
 }
@@ -746,6 +775,24 @@ function normalizeAgentOutputLine(raw: unknown): AgentOutputLine | undefined {
     stream: stream === 'stderr' ? 'stderr' : 'stdout',
     line: coerceString(payload.line),
     timestampMs: coerceNumber(payload.timestampMs),
+  };
+}
+
+function normalizeVerificationResult(raw: unknown): VerificationResultEvent | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  return {
+    slotId: coerceString(payload.slotId),
+    projectId: coerceString(payload.projectId),
+    success: Boolean(payload.success),
+    step: coerceString(payload.step),
+    command: coerceString(payload.command),
+    statusCode: coerceNumber(payload.statusCode),
+    stdout: coerceString(payload.stdout),
+    stderr: coerceString(payload.stderr),
   };
 }
 

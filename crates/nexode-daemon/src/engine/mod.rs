@@ -11,7 +11,7 @@ use nexode_proto::{
     CommandOutcome, CommandResponse, FullStateSnapshot, HypervisorEvent, LoopDetected,
     ObserverAlert, ObserverIntervention, OperatorCommand, Project, ProjectBudgetAlert, ResumeSlot,
     SandboxViolation, SlotAgentSwapped, TaskNode, TaskStatus, TaskStatusChanged, UncertaintySignal,
-    WorktreeStatusChanged, Worktree,
+    VerificationResult, WorktreeStatusChanged, Worktree,
 };
 use thiserror::Error;
 use tokio::net::TcpListener;

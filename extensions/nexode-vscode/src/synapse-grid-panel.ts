@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 import type { WebviewToHostMessage } from '../webview/shared/types';
+import type { DaemonClient } from './daemon-client';
 import { StateCache } from './state';
 import { configureWebview, createStateMessage } from './webview-support';
 
@@ -14,6 +15,7 @@ export class SynapseGridPanel implements vscode.Disposable {
   public constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly state: StateCache,
+    private readonly client: DaemonClient,
   ) {
     this.stateSubscription = this.state.onDidChange(() => {
       void this.postState();
@@ -40,10 +42,7 @@ export class SynapseGridPanel implements vscode.Disposable {
     this.ready = false;
     this.panel = panel;
     panel.webview.onDidReceiveMessage((message: WebviewToHostMessage) => {
-      if (message.type === 'ready') {
-        this.ready = true;
-        void this.postState();
-      }
+      void this.handleMessage(message);
     });
 
     configureWebview(panel.webview, this.extensionUri, {
@@ -61,6 +60,23 @@ export class SynapseGridPanel implements vscode.Disposable {
   public dispose(): void {
     this.stateSubscription.dispose();
     this.panel?.dispose();
+  }
+
+  private async handleMessage(message: WebviewToHostMessage): Promise<void> {
+    if (message.type === 'ready') {
+      this.ready = true;
+      await this.postState();
+      return;
+    }
+
+    if (message.type === 'viewSlotOutput') {
+      await vscode.commands.executeCommand('nexode.showSlotOutput');
+      return;
+    }
+
+    if (message.type === 'openSlotDiff') {
+      await vscode.commands.executeCommand('nexode.openSlotDiff', message.slotId);
+    }
   }
 
   private async postState(): Promise<void> {

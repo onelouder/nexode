@@ -70,6 +70,16 @@ export class KanbanPanel implements vscode.Disposable {
       return;
     }
 
+    if (message.type === 'viewSlotOutput') {
+      await vscode.commands.executeCommand('nexode.showSlotOutput');
+      return;
+    }
+
+    if (message.type === 'openSlotDiff') {
+      await vscode.commands.executeCommand('nexode.openSlotDiff', message.slotId);
+      return;
+    }
+
     if (message.type !== 'moveTask') {
       return;
     }

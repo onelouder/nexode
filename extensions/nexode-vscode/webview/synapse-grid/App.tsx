@@ -5,7 +5,7 @@ import {
   sortSlotCardModelsForFlatView,
   type SlotCardModel,
 } from '../../src/view-models';
-import { onHostMessage, postReady } from '../shared/bridge';
+import { onHostMessage, postHostMessage, postReady } from '../shared/bridge';
 import {
   agentTone,
   alertTone,
@@ -270,6 +270,14 @@ function SlotCard({
         ) : null}
       </div>
       {primaryAlert ? <p className="slot-alert">{formatAlertMessage(primaryAlert)}</p> : null}
+      <div className="slot-card-actions">
+        <button className="action-btn" onClick={() => postHostMessage({ type: 'viewSlotOutput', slotId: card.slot.id })} type="button">
+          Output
+        </button>
+        <button className="action-btn" onClick={() => postHostMessage({ type: 'openSlotDiff', slotId: card.slot.id })} type="button">
+          Diff
+        </button>
+      </div>
       <dl>
         <div>
           <dt>Status</dt>

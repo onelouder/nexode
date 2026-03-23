@@ -20,6 +20,7 @@
     "onCommand:nexode.openSynapseGrid",
     "onCommand:nexode.openKanban",
     "onCommand:nexode.showSlotOutput",
+    "onCommand:nexode.openSlotDiff",
     "onCommand:nexode.resetWorkspaceFolders",
     "onView:nexodeSlots",
     "onView:nexodeSynapseSidebar"
@@ -73,10 +74,23 @@
         "title": "Nexode: Show Slot Output"
       },
       {
+        "command": "nexode.openSlotDiff",
+        "title": "Nexode: Open Slot Diff"
+      },
+      {
         "command": "nexode.resetWorkspaceFolders",
         "title": "Nexode: Reset Workspace Folders"
       }
     ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "nexode.openSlotDiff",
+          "when": "view == nexodeSlots && viewItem == slot",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Nexode",
       "properties": {

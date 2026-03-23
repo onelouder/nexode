@@ -101,6 +101,19 @@ impl DaemonEngine {
                     project_id: project_id.to_string(),
                     outcome: MergeOutcomeTag::Success,
                 })?;
+                self.publish_event(
+                    hypervisor_event::Payload::VerificationResult(VerificationResult {
+                        slot_id: slot_id.to_string(),
+                        project_id: project_id.to_string(),
+                        success: true,
+                        step: String::new(),
+                        command: String::new(),
+                        status_code: 0,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }),
+                    None,
+                );
                 let barrier_id = Some(next_barrier_id());
                 self.set_task_status(slot_id, TaskStatus::Done, None, barrier_id.clone())?;
                 self.publish_event(
@@ -127,10 +140,61 @@ impl DaemonEngine {
                 })?;
                 self.set_task_status(slot_id, TaskStatus::Resolving, None, None)?;
             }
-            Err(
-                GitWorktreeError::VerificationFailed { .. }
-                | GitWorktreeError::VerificationTimedOut { .. },
-            ) => {
+            Err(GitWorktreeError::VerificationFailed {
+                step,
+                command,
+                status_code,
+                stdout,
+                stderr,
+            }) => {
+                self.publish_event(
+                    hypervisor_event::Payload::VerificationResult(VerificationResult {
+                        slot_id: slot_id.to_string(),
+                        project_id: project_id.to_string(),
+                        success: false,
+                        step: step.to_string(),
+                        command: command.clone(),
+                        status_code,
+                        stdout,
+                        stderr,
+                    }),
+                    None,
+                );
+                if let Some(slot) = self.slot_mut(slot_id) {
+                    slot.supervisor = None;
+                    slot.current_agent_pid = None;
+                }
+                if let Some(project) = self.state.projects.get_mut(project_id) {
+                    project.merge_inflight_slot = None;
+                }
+                self.wal.append(&WalEntry::MergeCompleted {
+                    timestamp_ms: now_ms(),
+                    slot_id: slot_id.to_string(),
+                    project_id: project_id.to_string(),
+                    outcome: MergeOutcomeTag::VerificationFailed,
+                })?;
+                self.set_task_status(slot_id, TaskStatus::Review, None, None)?;
+            }
+            Err(GitWorktreeError::VerificationTimedOut {
+                step,
+                command,
+                stdout,
+                stderr,
+                ..
+            }) => {
+                self.publish_event(
+                    hypervisor_event::Payload::VerificationResult(VerificationResult {
+                        slot_id: slot_id.to_string(),
+                        project_id: project_id.to_string(),
+                        success: false,
+                        step: step.to_string(),
+                        command: command.clone(),
+                        status_code: -1,
+                        stdout,
+                        stderr,
+                    }),
+                    None,
+                );
                 if let Some(slot) = self.slot_mut(slot_id) {
                     slot.supervisor = None;
                     slot.current_agent_pid = None;
