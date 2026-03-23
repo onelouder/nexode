@@ -82,6 +82,7 @@ function createSnapshot(): FullStateSnapshot {
             worktreeId: 'wt-a',
             totalTokens: 125,
             totalCostUsd: 0.82,
+            worktreePath: '',
           },
         ],
       },
@@ -105,6 +106,7 @@ function createSnapshot(): FullStateSnapshot {
             worktreeId: 'wt-c',
             totalTokens: 42,
             totalCostUsd: 0.31,
+            worktreePath: '',
           },
         ],
       },
@@ -218,6 +220,7 @@ function createFlatCard(
       worktreeId: `wt-${id}`,
       totalTokens,
       totalCostUsd: 0.5,
+      worktreePath: '',
     },
     task: {
       id,

@@ -4,10 +4,12 @@ import * as vscode from 'vscode';
 import { DaemonClient, readDaemonConfiguration } from './daemon-client';
 import { registerCommands } from './commands';
 import { KanbanPanel } from './kanban-panel';
+import { OutputChannelManager } from './output-channel-manager';
 import { SlotTreeProvider } from './slot-tree-provider';
 import { StateCache } from './state';
 import { NexodeStatusBar } from './status-bar';
 import { SynapseGridPanel, SynapseSidebarProvider } from './synapse-grid-panel';
+import { WorkspaceFolderManager } from './workspace-folder-manager';
 
 let activeClient: DaemonClient | undefined;
 
@@ -24,6 +26,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const synapseGridPanel = new SynapseGridPanel(context.extensionUri, state);
   const synapseSidebarProvider = new SynapseSidebarProvider(context.extensionUri, state);
   const kanbanPanel = new KanbanPanel(context.extensionUri, state, client);
+  const workspaceFolderManager = new WorkspaceFolderManager(state);
+  const outputChannelManager = new OutputChannelManager(state);
   const treeView = vscode.window.createTreeView('nexodeSlots', {
     treeDataProvider: treeProvider,
     showCollapseAll: true,
@@ -39,6 +43,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     synapseGridPanel,
     synapseSidebarProvider,
     kanbanPanel,
+    workspaceFolderManager,
+    outputChannelManager,
     treeView,
     vscode.window.registerWebviewViewProvider('nexodeSynapseSidebar', synapseSidebarProvider, {
       webviewOptions: {
@@ -53,6 +59,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     client.subscribeEvents((event) => {
       state.applyEvent(event);
+    }),
+    client.onDidReceiveAgentOutput((output) => outputChannelManager.appendLine(output)),
+    vscode.commands.registerCommand('nexode.showSlotOutput', async () => {
+      const slots = state.getAllSlots();
+      if (slots.length === 0) {
+        vscode.window.showInformationMessage('No active slots');
+        return;
+      }
+      const items = slots.map((s) => ({
+        label: s.slot.id,
+        description: s.project.displayName,
+      }));
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select slot to show output',
+      });
+      if (selected) {
+        outputChannelManager.showSlotOutput(selected.label);
+      }
+    }),
+    vscode.commands.registerCommand('nexode.resetWorkspaceFolders', () => {
+      workspaceFolderManager.resetFolders();
     }),
     ...registerCommands(client, state, async () => {
       await vscode.commands.executeCommand('workbench.view.extension.nexode');

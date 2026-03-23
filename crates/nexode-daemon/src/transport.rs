@@ -46,7 +46,7 @@ type EventStream =
 
 impl GrpcBridge {
     pub fn new(initial_state: FullStateSnapshot) -> Self {
-        Self::with_event_buffer(initial_state, 256)
+        Self::with_event_buffer(initial_state, 2048)
     }
 
     pub fn with_event_buffer(initial_state: FullStateSnapshot, event_buffer: usize) -> Self {
@@ -205,6 +205,7 @@ mod tests {
             total_session_cost: 1.5,
             session_budget_max_usd: 50.0,
             last_event_sequence: 0,
+            worktrees: Vec::new(),
         })
         .await;
 

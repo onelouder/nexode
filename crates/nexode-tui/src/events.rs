@@ -80,6 +80,16 @@ pub fn format_event_message(event: &HypervisorEvent) -> String {
             ),
             None => "ObserverAlert <empty>".to_string(),
         },
+        Some(hypervisor_event::Payload::AgentOutputLine(payload)) => format!(
+            "Output {} [{}] {}",
+            payload.slot_id,
+            payload.stream,
+            if payload.line.len() > 120 {
+                format!("{}...", &payload.line[..120])
+            } else {
+                payload.line.clone()
+            }
+        ),
         None => "Empty event".to_string(),
     }
 }

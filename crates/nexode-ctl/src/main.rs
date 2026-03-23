@@ -347,6 +347,18 @@ fn format_event(event: &nexode_proto::HypervisorEvent) -> String {
                 event.event_sequence, event.event_id
             ),
         },
+        Some(hypervisor_event::Payload::AgentOutputLine(payload)) => format!(
+            "#{} {} output {} [{}] {}",
+            event.event_sequence,
+            event.event_id,
+            payload.slot_id,
+            payload.stream,
+            if payload.line.len() > 120 {
+                format!("{}...", &payload.line[..120])
+            } else {
+                payload.line.clone()
+            }
+        ),
         None => format!("#{} {} empty-event", event.event_sequence, event.event_id),
     }
 }

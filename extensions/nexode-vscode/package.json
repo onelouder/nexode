@@ -19,6 +19,8 @@
     "onCommand:nexode.moveTask",
     "onCommand:nexode.openSynapseGrid",
     "onCommand:nexode.openKanban",
+    "onCommand:nexode.showSlotOutput",
+    "onCommand:nexode.resetWorkspaceFolders",
     "onView:nexodeSlots",
     "onView:nexodeSynapseSidebar"
   ],
@@ -65,6 +67,14 @@
       {
         "command": "nexode.openKanban",
         "title": "Nexode: Open Macro Kanban"
+      },
+      {
+        "command": "nexode.showSlotOutput",
+        "title": "Nexode: Show Slot Output"
+      },
+      {
+        "command": "nexode.resetWorkspaceFolders",
+        "title": "Nexode: Reset Workspace Folders"
       }
     ],
     "configuration": {

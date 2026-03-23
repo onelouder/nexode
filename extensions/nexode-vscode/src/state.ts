@@ -35,6 +35,15 @@ export interface AgentSlot {
   worktreeId: string;
   totalTokens: number;
   totalCostUsd: number;
+  worktreePath: string;
+}
+
+export interface AgentOutputLine {
+  slotId: string;
+  agentId: string;
+  stream: 'stdout' | 'stderr';
+  line: string;
+  timestampMs: number;
 }
 
 export interface Project {
@@ -164,6 +173,7 @@ export interface HypervisorEvent {
   projectBudgetAlert?: ProjectBudgetAlertEvent;
   slotAgentSwapped?: SlotAgentSwappedEvent;
   observerAlert?: ObserverAlertEvent;
+  agentOutputLine?: AgentOutputLine;
   payload?: string;
 }
 
@@ -255,7 +265,7 @@ const FINDING_KINDS: FindingKindName[] = [
   'FINDING_KIND_BUDGET_VELOCITY',
 ];
 
-class Emitter<T> implements DisposableLike {
+export class Emitter<T> implements DisposableLike {
   private readonly listeners = new Set<(event: T) => void>();
 
   public readonly event: Event<T> = (listener) => {
@@ -535,6 +545,7 @@ export function normalizeEvent(raw: Record<string, unknown> | undefined): Hyperv
     projectBudgetAlert: normalizeProjectBudgetAlert(raw?.projectBudgetAlert),
     slotAgentSwapped: normalizeSlotAgentSwapped(raw?.slotAgentSwapped),
     observerAlert: normalizeObserverAlert(raw?.observerAlert),
+    agentOutputLine: normalizeAgentOutputLine(raw?.agentOutputLine),
     payload: coerceString(raw?.payload),
   };
 }
@@ -604,6 +615,7 @@ function normalizeSlots(raw: unknown): AgentSlot[] {
       worktreeId: coerceString(slot.worktreeId),
       totalTokens: coerceNumber(slot.totalTokens),
       totalCostUsd: coerceNumber(slot.totalCostUsd),
+      worktreePath: coerceString(slot.worktreePath),
     };
   });
 }
@@ -718,6 +730,22 @@ function normalizeWorktreeStatusChanged(raw: unknown): WorktreeStatusChangedEven
   return {
     worktreeId: coerceString(payload.worktreeId),
     newRisk: coerceNumber(payload.newRisk),
+  };
+}
+
+function normalizeAgentOutputLine(raw: unknown): AgentOutputLine | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const payload = asRecord(raw);
+  const stream = coerceString(payload.stream);
+  return {
+    slotId: coerceString(payload.slotId),
+    agentId: coerceString(payload.agentId),
+    stream: stream === 'stderr' ? 'stderr' : 'stdout',
+    line: coerceString(payload.line),
+    timestampMs: coerceNumber(payload.timestampMs),
   };
 }
 

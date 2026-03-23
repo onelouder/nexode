@@ -60,6 +60,7 @@ message AgentSlot {
   string worktree_id = 7;
   uint64 total_tokens = 8;
   double total_cost_usd = 9;
+  string worktree_path = 10;
 }
 
 message Agent {
@@ -104,6 +105,7 @@ message FullStateSnapshot {
   double total_session_cost = 3;
   double session_budget_max_usd = 4;
   uint64 last_event_sequence = 5;
+  repeated Worktree worktrees = 6;
 }
 
 message HypervisorEvent {
@@ -121,7 +123,16 @@ message HypervisorEvent {
     ProjectBudgetAlert project_budget_alert = 9;
     SlotAgentSwapped slot_agent_swapped = 10;
     ObserverAlert observer_alert = 12;
+    AgentOutputLine agent_output_line = 13;
   }
+}
+
+message AgentOutputLine {
+  string slot_id = 1;
+  string agent_id = 2;
+  string stream = 3;
+  string line = 4;
+  uint64 timestamp_ms = 5;
 }
 
 message AgentStateChanged {
