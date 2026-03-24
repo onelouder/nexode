@@ -208,6 +208,9 @@ export class DaemonClient implements vscode.Disposable {
       }
 
       const event = normalizeEvent(message);
+      // HypervisorEvent uses protobuf oneof for the payload — exactly one field
+      // is set per message. Output events bypass StateCache to avoid tree refresh
+      // thrashing at high line rates.
       if (event.agentOutputLine) {
         this.outputEmitter.fire(event.agentOutputLine);
       } else {

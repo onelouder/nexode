@@ -139,7 +139,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  await client.connect();
+  try {
+    await client.connect();
+  } catch {
+    // Daemon may not be running yet — extension activates but stays disconnected.
+    // DaemonClient will retry on its own when the daemon becomes available.
+  }
 }
 
 export async function deactivate(): Promise<void> {

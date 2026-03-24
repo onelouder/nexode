@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { parseDiagnostics } from '../src/diagnostic-parser';
 
-test('parseDiagnostics parses Rust error pattern', () => {
+test('parseDiagnostics parses Rust error pattern with message from header', () => {
   const stdout = '';
   const stderr = 'error[E0308]: mismatched types\n  --> src/main.rs:42:5\n';
   const results = parseDiagnostics(stdout, stderr);
@@ -13,6 +13,22 @@ test('parseDiagnostics parses Rust error pattern', () => {
   assert.equal(results[0].line, 42);
   assert.equal(results[0].column, 5);
   assert.equal(results[0].severity, 'error');
+  assert.equal(results[0].message, 'mismatched types');
+});
+
+test('parseDiagnostics parses Rust warning with message', () => {
+  const stderr = 'warning[unused_variables]: unused variable `x`\n  --> src/lib.rs:10:9\n';
+  const results = parseDiagnostics('', stderr);
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].severity, 'warning');
+  assert.equal(results[0].message, 'unused variable `x`');
+});
+
+test('parseDiagnostics falls back to generic message for bare --> pointer', () => {
+  const results = parseDiagnostics('', '  --> lib/utils.rs:7:12');
+  assert.equal(results.length, 1);
+  assert.equal(results[0].message, 'Build error (see output for details)');
 });
 
 test('parseDiagnostics parses TypeScript error pattern', () => {
@@ -46,17 +62,11 @@ test('parseDiagnostics returns empty array for empty input', () => {
   assert.equal(results.length, 0);
 });
 
-test('parseDiagnostics works with stderr-only input', () => {
-  const results = parseDiagnostics('', '  --> lib/utils.rs:7:12');
-  assert.equal(results.length, 1);
-  assert.equal(results[0].filePath, 'lib/utils.rs');
-  assert.equal(results[0].line, 7);
-  assert.equal(results[0].column, 12);
-});
-
 test('parseDiagnostics deduplicates same file:line:col', () => {
   const stderr = [
+    'error: duplicate definition',
     '  --> src/main.rs:42:5',
+    'error: duplicate definition',
     '  --> src/main.rs:42:5',
   ].join('\n');
   const results = parseDiagnostics('', stderr);
