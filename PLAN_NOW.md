@@ -1,101 +1,108 @@
-# PLAN_NOW.md — Sprint 11: Foundation — Workspace Folders + Agent Output
+# PLAN_NOW.md — Sprint 12: Merge Choreography TreeView + Extension Polish
 
 > Owner: claude
 > Reviewer: pc (Perplexity Computer)
-> Status: in progress on `agent/claude/sprint-11-workspace-folders`
-> Architecture reference: `docs/architecture/multiplexed-workspaces.md`
-> Sprint prompt: `.agents/prompts/sprint-11-codex.md`
-> Previous sprint: Sprint 10 Tranche C — complete on `agent/gpt/sprint-10c-view-modes`
+> Status: ready to start (pending Sprint 11-alt merge to main)
+> Spec reference: master-spec sec-11 "Weeks 2-4" (Merge Choreography) and "Weeks 5-8" (Polish)
+> Previous sprint: Sprint 11-alt — Workspace Foundation + Feedback Surfaces (off-plan, reviewed + fixed)
+
+## Context
+
+Sprint 11-alt delivered off-plan but valid Phase 3 work: workspace folder management, output streaming, diagnostics, decorations, and diff commands. This was originally scoped by `pc` as Sprint 11 (Merge Choreography + Polish) but agent divergence produced different deliverables. Sprint 12 picks up the originally planned scope.
 
 ## Objective
 
-Introduce the foundation layer for the Multiplexed Native Workspace Architecture: worktree-as-workspace-folder (F-01) and agent output streaming (F-02). After this sprint, agent worktrees appear as VS Code workspace folders in Explorer (with SCM, intellisense, and editor tabs for free), and agent stdout/stderr streams to per-slot VS Code OutputChannels.
+Deliver the Merge Choreography TreeView and extension polish. After this sprint, the VS Code extension covers all sec-11 deliverables except the Chat Participant (Sprint 13), and the extension is ready for settings configuration and basic onboarding.
 
 ## Starting Point
 
-Sprint 10 Tranche C shipped:
-- Synapse Grid with 3 view modes (Project Groups, Flat, Focus)
-- Shared webview formatters in `webview/shared/format.ts`
-- Observer alert rendering in both webview surfaces
-- 15 TypeScript tests, 114 Rust tests, all passing
+Sprint 11-alt shipped:
+- WorkspaceFolderManager: worktree-as-workspace-folder reconciliation (200ms debounce)
+- OutputChannelManager: per-slot VS Code output channels with lazy creation
+- DiagnosticManager: verification failure diagnostics in Problems panel (Rust, TSC, generic patterns)
+- DecorationProvider: colored status badges (WK/RV/MQ/RS/DN/PA) on workspace folders
+- Expanded webview message contract with Output/Diff action buttons
+- Proto: AgentOutputLine, VerificationResult events
+- 30 TypeScript tests, all passing
 
-The extension currently has no awareness of worktree filesystem paths (proto `AgentSlot` lacks `worktree_path`), no agent output streaming (raw lines are not published to gRPC), and no workspace folder management.
+What's missing for sec-11 completion:
+- **Merge Choreography TreeView** (sec-11 "Weeks 2-4" — native TreeView in AuxiliaryBar)
+- **Extension Settings Page** (sec-11 "Weeks 5-8")
+- **Extension README + Onboarding**
+
+## Pre-Sprint: Merge to Main
+
+Before starting Sprint 12 implementation:
+1. Rebase `agent/gpt/sprint-10c-view-modes` onto `origin/main` (resolve any conflicts with `pc`'s Sprint 10C review/handoff commits)
+2. Create PR for Sprint 11-alt, squash-merge to main
+3. Create fresh branch `agent/claude/sprint-12-merge-choreography` from updated main
 
 ## Scope
 
-### S11-01: Proto changes
+### S12-01: Merge Choreography TreeView
 
-Add to both proto copies (`crates/nexode-proto/proto/hypervisor.proto` and `extensions/nexode-vscode/proto/hypervisor.proto`):
-- `string worktree_path = 10` on `AgentSlot`
-- `repeated Worktree worktrees = 6` on `FullStateSnapshot`
-- `AgentOutputLine` message (slot_id, agent_id, stream, line, timestamp_ms)
-- `AgentOutputLine agent_output_line = 13` in `HypervisorEvent.oneof payload`
+**Spec:** sec-11 "Weeks 2-4" — "VS Code native TreeView (AuxiliaryBar). Shows worktrees in REVIEW state, conflict risk score, approve/reject actions."
 
-### S11-02: Daemon — worktree_path in snapshots
+**Implementation:**
+- New `src/merge-tree.ts` with `TreeDataProvider`
+- Register in `package.json` under AuxiliaryBar views
+- Tree structure:
+  - Root: one node per project with active merge queue entries
+  - Children: one node per slot in REVIEW or MERGE_QUEUE status
+  - Each node: slot ID, branch name, agent, status badge
+- Conflict risk indicator: heuristic (file count + concurrent REVIEW slots) — Phase 4 for AST scoring
+- Inline actions: Approve → MERGE_QUEUE (`MoveTask`), Reject → WORKING (`MoveTask`), Pause
+- Live updates: subscribe to StateCache, refresh on REVIEW/MERGE_QUEUE/RESOLVING changes
+- Empty state: "No active merges" placeholder
 
-Populate `AgentSlot.worktree_path` and `FullStateSnapshot.worktrees` in `RuntimeState::snapshot()` from existing `SlotRuntime.worktree_path` data.
+### S12-02: Extension Settings Page
 
-### S11-03: Daemon — output event publishing
+**Spec:** sec-11 "Weeks 5-8" — "Settings page (session.yaml path, socket path, theme)."
 
-In `engine/slots.rs`, publish `AgentOutputLine` events for each non-empty agent output line. Add 500-line output ring buffer to `SlotRuntime`. Increase broadcast buffer from 256 to 2048.
+- `contributes.configuration` in `package.json`:
+  - `nexode.sessionPath` (string, default `.nexode/session.yaml`)
+  - `nexode.socketPath` (string, optional Unix socket)
+  - `nexode.theme` (`'auto' | 'synapse-dark' | 'synapse-light'`, default `'auto'`)
+  - `nexode.showStatusBar` (boolean, default `true`)
+- Verify existing `nexode.daemonHost` / `nexode.daemonPort` settings work with live reload
 
-### S11-04: Extension — state normalization
+### S12-03: Extension README + Onboarding
 
-Add `worktreePath: string` to `AgentSlot` interface in `state.ts`. Add `AgentOutputLine` interface. Update normalization functions. Output events must NOT trigger `StateCache.onDidChange`.
+- `extensions/nexode-vscode/README.md`: overview, prerequisites, installation, configuration, features, commands, troubleshooting
+- Optional stretch: `walkthroughs` contribution in `package.json`
 
-### S11-05: Extension — WorkspaceFolderManager
+### S12-04: Tests
 
-New `src/workspace-folder-manager.ts`: subscribes to state changes, reconciles workspace folders against slot worktree paths. Debounced 200ms batched updates. Adds folders for active slots, removes for DONE/ARCHIVED.
+- `test/merge-tree.test.ts`: tree structure, refresh, conflict risk calculation
+- Settings validation tests
+- Stretch: Tier 2 extension host test setup (R-011)
 
-### S11-06: Extension — OutputChannelManager
+## Non-Goals for Sprint 12
 
-New `src/output-channel-manager.ts`: creates per-slot OutputChannels lazily. Subscribes to `DaemonClient.onDidReceiveAgentOutput` bypass event (not StateCache). Disposes channels on slot completion.
-
-### S11-07: Extension — DaemonClient output bypass
-
-Add `onDidReceiveAgentOutput` event emitter to `DaemonClient`. Route `agentOutputLine` events directly to this emitter, bypassing StateCache.
-
-### S11-08: Extension — wiring and commands
-
-Wire WorkspaceFolderManager and OutputChannelManager in `extension.ts`. Register `nexode.showSlotOutput` and `nexode.resetWorkspaceFolders` commands. Update `package.json`.
-
-### S11-09: Tests
-
-- `test/workspace-folder-manager.test.ts` — reconciliation logic
-- `test/output-channel-manager.test.ts` — channel lifecycle
-- `test/state.test.ts` updates — worktreePath normalization, output event handling
-- Rust: verify AgentOutputLine events in gRPC stream
-
-## Non-Goals for Sprint 11
-
-- File decorations — Sprint 12
-- Diagnostic/Problems panel — Sprint 12
-- Diff commands — Sprint 12
-- Expanded webview messages — Sprint 12
-- Lifecycle scripts — Sprint 13
-- Failure re-routing — Sprint 13
-- Comments API — Sprint 14
-- Pre-merge gating — Sprint 14
+- Chat Participant (`@nexode`) — Sprint 13
+- Full AST-based conflict risk scoring — Phase 4
+- Rich per-cell presentation (spark-lines, progress bars)
+- Output ring buffer (Sprint 15 prep)
+- QG-1 score gate integration
 
 ## Constraints
 
-1. All 114 Rust tests must continue to pass, plus new output event test(s)
-2. All 15 TypeScript tests must continue to pass, plus new tests
-3. TypeScript strict mode maintained
-4. Proto is append-only; both copies must be identical
-5. No webview changes in this sprint
-6. Maintain nonce-based CSP
+1. No Rust changes. TypeScript-only. `cargo test --workspace` must still pass.
+2. Native TreeView for Merge Choreography (not a React webview) — per spec.
+3. Maintain nonce-based CSP. No `'unsafe-inline'` in `style-src`.
+4. TypeScript strict mode maintained.
+5. D-012 compliance: column moves dispatch `MoveTask`, assignment uses `AssignTask`.
 
 ## Verification
 
 ```bash
-cargo check --workspace
-cargo test --workspace  # 114+ tests
-
 cd extensions/nexode-vscode
 npm install
 npm run build
 npm run build:webview
 npm run check-types
-npm test  # 15+ existing + new tests
+npm test
+cd ../..
+cargo check --workspace
+cargo test --workspace
 ```
