@@ -23,7 +23,8 @@
     "onCommand:nexode.openSlotDiff",
     "onCommand:nexode.resetWorkspaceFolders",
     "onView:nexodeSlots",
-    "onView:nexodeSynapseSidebar"
+    "onView:nexodeSynapseSidebar",
+    "onView:nexodeMergeQueue"
   ],
   "contributes": {
     "viewsContainers": {
@@ -40,6 +41,10 @@
         {
           "id": "nexodeSlots",
           "name": "Slots"
+        },
+        {
+          "id": "nexodeMergeQueue",
+          "name": "Merge Queue"
         },
         {
           "type": "webview",
@@ -80,6 +85,21 @@
       {
         "command": "nexode.resetWorkspaceFolders",
         "title": "Nexode: Reset Workspace Folders"
+      },
+      {
+        "command": "nexode.mergeApprove",
+        "title": "Approve → Merge Queue",
+        "icon": "$(check)"
+      },
+      {
+        "command": "nexode.mergeReject",
+        "title": "Reject → Working",
+        "icon": "$(close)"
+      },
+      {
+        "command": "nexode.mergePause",
+        "title": "Pause Slot",
+        "icon": "$(debug-pause)"
       }
     ],
     "menus": {
@@ -88,6 +108,21 @@
           "command": "nexode.openSlotDiff",
           "when": "view == nexodeSlots && viewItem == slot",
           "group": "navigation"
+        },
+        {
+          "command": "nexode.mergeApprove",
+          "when": "view == nexodeMergeQueue && viewItem == mergeSlot",
+          "group": "inline"
+        },
+        {
+          "command": "nexode.mergeReject",
+          "when": "view == nexodeMergeQueue && viewItem == mergeSlot",
+          "group": "inline"
+        },
+        {
+          "command": "nexode.mergePause",
+          "when": "view == nexodeMergeQueue && viewItem == mergeSlot",
+          "group": "inline"
         }
       ]
     },
@@ -105,6 +140,27 @@
           "minimum": 1,
           "maximum": 65535,
           "description": "TCP port for the Nexode daemon gRPC listener."
+        },
+        "nexode.sessionPath": {
+          "type": "string",
+          "default": ".nexode/session.yaml",
+          "description": "Path to the session.yaml configuration file."
+        },
+        "nexode.socketPath": {
+          "type": "string",
+          "default": "",
+          "description": "Unix socket path for daemon connection. When set, overrides host:port."
+        },
+        "nexode.theme": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "synapse-dark", "synapse-light"],
+          "description": "UI theme for Nexode webview surfaces."
+        },
+        "nexode.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Nexode status bar item with aggregate metrics."
         }
       }
     }

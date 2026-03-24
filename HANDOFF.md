@@ -1,10 +1,10 @@
 ---
 agent: claude
 claimed: 2026-03-24T12:00:00-07:00
-status: idle
+status: claimed
 from: claude
-task: "Sprint 11-alt reviewed, fixes applied, ready for merge to main. Sprint 12 scoped."
-branch: "agent/gpt/sprint-10c-view-modes"
+task: "Sprint 12 — Merge Choreography TreeView + Extension Polish"
+branch: "agent/claude/sprint-12-merge-choreography"
 ---
 
 # HANDOFF.md

@@ -15,8 +15,6 @@ export function parseDiagnostics(stdout: string, stderr: string): ParsedDiagnost
   //   error[E0308]: mismatched types
   //     --> src/main.rs:42:5
   // We also handle warning[...] lines.
-  const rustHeaderPattern = /^(error|warning)(\[\w+\])?:\s*(.+)$/gm;
-  const rustPointerPattern = /^\s*-->\s+(.+?):(\d+):(\d+)/gm;
 
   // Build a map of line-number → {severity, message} from error/warning headers
   const lines = combined.split('\n');
@@ -58,16 +56,6 @@ export function parseDiagnostics(stdout: string, stderr: string): ParsedDiagnost
   const genericPattern = /^(.+?):(\d+):(\d+):\s*(error|warning|note|info):\s*(.+)$/gm;
 
   // Parse tsc pattern
-  for (const match of combined.matchAll(tscPattern)) {
-    results.push({
-      filePath: match[1],
-      line: parseInt(match[2], 10),
-      column: parseInt(match[3], 10),
-      severity: match[4] === 'warning' ? 'warning' : 'error',
-      message: match[5],
-    });
-  }
-
   for (const match of combined.matchAll(tscPattern)) {
     results.push({
       filePath: match[1],

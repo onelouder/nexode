@@ -2,7 +2,7 @@
 
 > Owner: claude
 > Reviewer: pc (Perplexity Computer)
-> Status: ready to start (pending Sprint 11-alt merge to main)
+> Status: in progress on `agent/claude/sprint-12-merge-choreography`
 > Spec reference: master-spec sec-11 "Weeks 2-4" (Merge Choreography) and "Weeks 5-8" (Polish)
 > Previous sprint: Sprint 11-alt — Workspace Foundation + Feedback Surfaces (off-plan, reviewed + fixed)
 
