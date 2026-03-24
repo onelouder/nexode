@@ -347,6 +347,30 @@ fn format_event(event: &nexode_proto::HypervisorEvent) -> String {
                 event.event_sequence, event.event_id
             ),
         },
+        Some(hypervisor_event::Payload::AgentOutputLine(payload)) => format!(
+            "#{} {} output {} [{}] {}",
+            event.event_sequence,
+            event.event_id,
+            payload.slot_id,
+            payload.stream,
+            if payload.line.len() > 120 {
+                format!("{}...", &payload.line[..120])
+            } else {
+                payload.line.clone()
+            }
+        ),
+        Some(hypervisor_event::Payload::VerificationResult(payload)) => format!(
+            "#{} {} verification {} {} {}",
+            event.event_sequence,
+            event.event_id,
+            payload.slot_id,
+            if payload.success { "passed" } else { "FAILED" },
+            if payload.step.is_empty() {
+                String::new()
+            } else {
+                format!("({} exit={})", payload.step, payload.status_code)
+            }
+        ),
         None => format!("#{} {} empty-event", event.event_sequence, event.event_id),
     }
 }

@@ -226,6 +226,16 @@ function KanbanColumn({
                 ) : null}
               </div>
               {card.alerts[0] ? <p className="task-alert">{formatAlertMessage(card.alerts[0])}</p> : null}
+              {card.slot ? (
+                <div className="slot-card-actions">
+                  <button className="action-btn" onClick={() => postHostMessage({ type: 'viewSlotOutput', slotId: card.slot!.id })} type="button">
+                    Output
+                  </button>
+                  <button className="action-btn" onClick={() => postHostMessage({ type: 'openSlotDiff', slotId: card.slot!.id })} type="button">
+                    Diff
+                  </button>
+                </div>
+              ) : null}
               <dl className="task-details">
                 <div>
                   <dt>Tokens</dt>

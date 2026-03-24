@@ -224,6 +224,22 @@ impl DaemonEngine {
                 {
                     self.handle_observer_finding(finding).await?;
                 }
+                // Publish raw output to gRPC subscribers for VS Code OutputChannels
+                if !line.is_empty() {
+                    self.publish_event(
+                        hypervisor_event::Payload::AgentOutputLine(AgentOutputLine {
+                            slot_id: slot_id.clone(),
+                            agent_id: agent_id.clone(),
+                            stream: match stream {
+                                OutputStream::Stdout => "stdout".into(),
+                                OutputStream::Stderr => "stderr".into(),
+                            },
+                            line: line.clone(),
+                            timestamp_ms: crate::engine::events::now_ms(),
+                        }),
+                        None,
+                    );
+                }
                 if matches!(stream, OutputStream::Stderr) && line.contains("spawn error:") {
                     self.publish_event(
                         hypervisor_event::Payload::AgentStateChanged(AgentStateChanged {

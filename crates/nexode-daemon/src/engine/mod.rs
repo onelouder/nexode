@@ -7,11 +7,11 @@ use nexode_proto::hypervisor_event;
 use nexode_proto::observer_alert;
 use nexode_proto::operator_command;
 use nexode_proto::{
-    AgentMode, AgentSlot, AgentState, AgentStateChanged, AgentTelemetryUpdated, CommandOutcome,
-    CommandResponse, FullStateSnapshot, HypervisorEvent, LoopDetected, ObserverAlert,
-    ObserverIntervention, OperatorCommand, Project, ProjectBudgetAlert, ResumeSlot,
+    AgentMode, AgentOutputLine, AgentSlot, AgentState, AgentStateChanged, AgentTelemetryUpdated,
+    CommandOutcome, CommandResponse, FullStateSnapshot, HypervisorEvent, LoopDetected,
+    ObserverAlert, ObserverIntervention, OperatorCommand, Project, ProjectBudgetAlert, ResumeSlot,
     SandboxViolation, SlotAgentSwapped, TaskNode, TaskStatus, TaskStatusChanged, UncertaintySignal,
-    WorktreeStatusChanged,
+    VerificationResult, WorktreeStatusChanged, Worktree,
 };
 use thiserror::Error;
 use tokio::net::TcpListener;

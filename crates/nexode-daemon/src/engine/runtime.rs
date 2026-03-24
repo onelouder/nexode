@@ -167,6 +167,22 @@ impl RuntimeState {
     }
 
     pub(super) fn snapshot(&self) -> FullStateSnapshot {
+        let worktrees = self
+            .projects
+            .values()
+            .flat_map(|project| {
+                project.slots.values().filter_map(|slot| {
+                    let path = slot.worktree_path.as_ref()?;
+                    Some(Worktree {
+                        id: format!("{}-{}", project.id, slot.id),
+                        absolute_path: path.display().to_string(),
+                        branch_name: slot.branch.clone(),
+                        conflict_risk: 0.0,
+                    })
+                })
+            })
+            .collect();
+
         FullStateSnapshot {
             projects: self
                 .projects
@@ -181,6 +197,7 @@ impl RuntimeState {
             total_session_cost: self.total_session_cost,
             session_budget_max_usd: self.session_budget_max_usd,
             last_event_sequence: self.last_event_sequence,
+            worktrees,
         }
     }
 }
@@ -320,6 +337,11 @@ impl SlotRuntime {
                 .unwrap_or_default(),
             total_tokens: self.total_tokens,
             total_cost_usd: self.total_cost_usd,
+            worktree_path: self
+                .worktree_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
         }
     }
 }

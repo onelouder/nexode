@@ -3,8 +3,10 @@ import * as protoLoader from '@grpc/proto-loader';
 import * as vscode from 'vscode';
 
 import {
+  AgentOutputLine,
   CommandResponse,
   ConnectionStatus,
+  Emitter,
   FullStateSnapshot,
   HypervisorEvent,
   normalizeCommandResponse,
@@ -63,6 +65,7 @@ export class DaemonClient implements vscode.Disposable {
   private readonly snapshotEmitter = new vscode.EventEmitter<FullStateSnapshot>();
   private readonly eventEmitter = new vscode.EventEmitter<HypervisorEvent>();
   private readonly connectionEmitter = new vscode.EventEmitter<ConnectionStatus>();
+  private readonly outputEmitter = new Emitter<AgentOutputLine>();
   private readonly clientConstructor: HypervisorClientConstructor;
 
   private host: string;
@@ -78,6 +81,7 @@ export class DaemonClient implements vscode.Disposable {
 
   public readonly onDidReceiveSnapshot = this.snapshotEmitter.event;
   public readonly onDidChangeConnectionStatus = this.connectionEmitter.event;
+  public readonly onDidReceiveAgentOutput = this.outputEmitter.event;
 
   public constructor(options: DaemonClientOptions) {
     this.host = options.host;
@@ -107,6 +111,7 @@ export class DaemonClient implements vscode.Disposable {
     this.snapshotEmitter.dispose();
     this.eventEmitter.dispose();
     this.connectionEmitter.dispose();
+    this.outputEmitter.dispose();
   }
 
   public async updateEndpoint(host: string, port: number): Promise<void> {
@@ -202,7 +207,15 @@ export class DaemonClient implements vscode.Disposable {
         return;
       }
 
-      this.eventEmitter.fire(normalizeEvent(message));
+      const event = normalizeEvent(message);
+      // HypervisorEvent uses protobuf oneof for the payload — exactly one field
+      // is set per message. Output events bypass StateCache to avoid tree refresh
+      // thrashing at high line rates.
+      if (event.agentOutputLine) {
+        this.outputEmitter.fire(event.agentOutputLine);
+      } else {
+        this.eventEmitter.fire(event);
+      }
     });
 
     stream.on('error', (error: grpc.ServiceError) => {

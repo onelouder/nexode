@@ -188,10 +188,35 @@
   - [ ] Extension host integration tests (Tier 2, R-011)
   - [ ] R-008 mitigation: bypass Extension Host for agent data streams
 
-### M3c: Sprint 11 — Merge Choreography TreeView + Extension Polish ⏳
+### M3c: Sprint 11-alt — Workspace Foundation + Feedback Surfaces ✅
 - **Target:** 2026-05-17
-- **Status:** Ready for gpt
-- **Agent:** gpt (Codex)
+- **Status:** Complete (reviewed + fixed 2026-03-24, pending merge to main)
+- **Agent:** claude (off-plan — agent divergence, see HANDOFF.md)
+- **Note:** This sprint diverged from the planned scope (Merge Choreography + Polish). The off-plan work is valid Phase 3 `sec-11-weeks-5-6` native VS Code integration work. The originally planned scope moves to Sprint 12.
+- **Deliverables:**
+  - [x] Proto: AgentSlot.worktree_path, FullStateSnapshot.worktrees, AgentOutputLine event, VerificationResult event
+  - [x] Daemon: worktree_path in snapshots, output event publishing, verification result publishing, broadcast buffer 256→2048
+  - [x] WorkspaceFolderManager: worktree-as-workspace-folder reconciliation (200ms debounce, DONE/ARCHIVED cleanup)
+  - [x] OutputChannelManager: per-slot VS Code output channels (lazy creation, terminal cleanup)
+  - [x] DaemonClient output bypass: separate event emitter for output events (avoids tree refresh thrashing)
+  - [x] DiagnosticManager + diagnostic-parser: verification failures → VS Code Problems panel (Rust, TSC, generic patterns)
+  - [x] DecorationProvider: colored status badges (WK/RV/MQ/RS/DN/PA) on workspace folders
+  - [x] Expanded webview message contract: ViewSlotOutput, OpenSlotDiff messages with action buttons
+  - [x] 30 Tier 1 tests passing (state, view-models, kanban-commands, format, diagnostic-parser)
+- **Review fixes applied (2026-03-24 by claude):**
+  - [x] CRITICAL: Kanban action buttons used task ID instead of slot ID — fixed with null guard
+  - [x] CRITICAL: Rust diagnostic parser extracted real error messages from header lines
+  - [x] HIGH: Added try-catch on client.connect() for graceful activation without daemon
+  - [x] LOW: Documented protobuf oneof assumption in DaemonClient event routing
+- **Known gaps (not blocking):**
+  - [ ] WorkspaceFolderManager unit tests (test/workspace-folder-manager.test.ts)
+  - [ ] OutputChannelManager unit tests (test/output-channel-manager.test.ts)
+  - [ ] Output ring buffer in SlotRuntime (500-line VecDeque — blocks Sprint 15)
+
+### M3d: Sprint 12 — Merge Choreography TreeView + Extension Polish ⏳
+- **Target:** 2026-05-24
+- **Status:** Ready to start (pending Sprint 11-alt merge to main)
+- **Agent:** claude
 - **Spec ref:** sec-11 "Weeks 2-4" (Merge Choreography), "Weeks 5-8" (Polish)
 - **Deliverables:**
   - [ ] Merge Choreography TreeView (native VS Code TreeView in AuxiliaryBar)
@@ -201,7 +226,7 @@
   - [ ] Extension README + onboarding walkthrough
   - [ ] Tier 1 tests for MergeTreeDataProvider and settings
   - [ ] Stretch: Tier 2 extension host tests (R-011)
-- **Deferred to Sprint 12:**
+- **Deferred to Sprint 13:**
   - [ ] Chat Participant (`@nexode`) — VS Code Chat API integration
   - [ ] Release candidate preparation
 

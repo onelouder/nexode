@@ -9,6 +9,8 @@ import {
   normalizeCommandResponse,
   normalizeEvent,
   normalizeSnapshot,
+  type AgentOutputLine,
+  type VerificationResultEvent,
 } from '../src/state';
 
 test('coerce helpers handle malformed values', () => {
@@ -53,6 +55,7 @@ test('normalizeSnapshot tolerates missing and malformed input', () => {
             worktreeId: 'wt-a',
             totalTokens: '123',
             totalCostUsd: '0.42',
+            worktreePath: '/tmp/worktrees/wt-a',
           },
         ],
       },
@@ -76,6 +79,7 @@ test('normalizeSnapshot tolerates missing and malformed input', () => {
   assert.equal(snapshot.projects[0]?.tags[0], 'ui');
   assert.equal(snapshot.projects[0]?.tags[1], '');
   assert.equal(snapshot.projects[0]?.slots[0]?.totalTokens, 123);
+  assert.equal(snapshot.projects[0]?.slots[0]?.worktreePath, '/tmp/worktrees/wt-a');
   assert.equal(snapshot.taskDag[0]?.status, 'TASK_STATUS_WORKING');
   assert.equal(snapshot.totalSessionCost, 3.5);
   assert.equal(snapshot.lastEventSequence, 12);
@@ -162,6 +166,7 @@ test('StateCache applies snapshot and event mutations', () => {
               worktreeId: 'wt-a',
               totalTokens: 100,
               totalCostUsd: 0.42,
+              worktreePath: '',
             },
           ],
         },
@@ -401,6 +406,281 @@ test('StateCache records recent observer alerts and uncertainty flags', () => {
       },
     },
   ]);
+
+  cache.dispose();
+});
+
+test('normalizeEvent handles agentOutputLine payload', () => {
+  const event = normalizeEvent({
+    eventId: 'evt-out-1',
+    timestampMs: '500',
+    barrierId: '',
+    eventSequence: '42',
+    agentOutputLine: {
+      slotId: 'slot-a',
+      agentId: 'agent-1',
+      stream: 'stderr',
+      line: 'error: something went wrong',
+      timestampMs: '499',
+    },
+  });
+
+  assert.equal(event.eventId, 'evt-out-1');
+  assert.equal(event.eventSequence, 42);
+  assert.ok(event.agentOutputLine);
+  assert.equal(event.agentOutputLine.slotId, 'slot-a');
+  assert.equal(event.agentOutputLine.agentId, 'agent-1');
+  assert.equal(event.agentOutputLine.stream, 'stderr');
+  assert.equal(event.agentOutputLine.line, 'error: something went wrong');
+  assert.equal(event.agentOutputLine.timestampMs, 499);
+});
+
+test('normalizeEvent defaults agentOutputLine stream to stdout for unknown values', () => {
+  const event = normalizeEvent({
+    eventId: 'evt-out-2',
+    timestampMs: '600',
+    eventSequence: '43',
+    agentOutputLine: {
+      slotId: 'slot-b',
+      agentId: 'agent-2',
+      stream: 'invalid-stream',
+      line: 'hello world',
+      timestampMs: '599',
+    },
+  });
+
+  assert.equal(event.agentOutputLine?.stream, 'stdout');
+});
+
+test('agentOutputLine events do not affect StateCache stored state', () => {
+  const cache = new StateCache();
+  let changeCount = 0;
+  const subscription = cache.onDidChange(() => {
+    changeCount += 1;
+  });
+
+  // Apply an agentOutputLine event via applyEvent — it fires changeEmitter
+  // but does not modify projects, taskDag, agents, or alerts.
+  // In production, DaemonClient intercepts agentOutputLine events and
+  // routes them to the output emitter instead of calling applyEvent.
+  cache.applyEvent(
+    normalizeEvent({
+      eventId: 'evt-out-3',
+      timestampMs: 700,
+      eventSequence: 1,
+      agentOutputLine: {
+        slotId: 'slot-a',
+        agentId: 'agent-1',
+        stream: 'stdout',
+        line: 'some output',
+        timestampMs: 699,
+      },
+    }),
+  );
+
+  assert.equal(changeCount, 1);
+  assert.deepEqual(cache.getProjects(), []);
+  assert.deepEqual(cache.getAgentStates(), []);
+  assert.deepEqual(cache.getAlerts(), []);
+
+  subscription.dispose();
+  cache.dispose();
+});
+
+test('normalizeEvent handles verificationResult payload', () => {
+  const event = normalizeEvent({
+    eventId: 'evt-vr-1',
+    timestampMs: '800',
+    barrierId: '',
+    eventSequence: '50',
+    verificationResult: {
+      slotId: 'slot-a',
+      projectId: 'proj-a',
+      success: false,
+      step: 'cargo build',
+      command: 'cargo build --release',
+      statusCode: 1,
+      stdout: 'Compiling...',
+      stderr: 'error[E0308]: mismatched types\n  --> src/main.rs:42:5',
+    },
+  });
+
+  assert.equal(event.eventId, 'evt-vr-1');
+  assert.equal(event.eventSequence, 50);
+  assert.ok(event.verificationResult);
+  assert.equal(event.verificationResult.slotId, 'slot-a');
+  assert.equal(event.verificationResult.projectId, 'proj-a');
+  assert.equal(event.verificationResult.success, false);
+  assert.equal(event.verificationResult.step, 'cargo build');
+  assert.equal(event.verificationResult.command, 'cargo build --release');
+  assert.equal(event.verificationResult.statusCode, 1);
+  assert.equal(event.verificationResult.stdout, 'Compiling...');
+  assert.ok(event.verificationResult.stderr.includes('error[E0308]'));
+});
+
+test('StateCache stores and retrieves verification results', () => {
+  const cache = new StateCache();
+
+  cache.applySnapshot(
+    normalizeSnapshot({
+      projects: [
+        {
+          id: 'proj-a',
+          displayName: 'Project A',
+          repoPath: '/tmp/project-a',
+          color: '#00bcd4',
+          tags: [],
+          budgetMaxUsd: 25,
+          budgetWarnUsd: 10,
+          currentCostUsd: 1,
+          slots: [
+            {
+              id: 'slot-a',
+              projectId: 'proj-a',
+              task: 'Build shell',
+              mode: 'AGENT_MODE_PLAN',
+              branch: 'agent/slot-a',
+              currentAgentId: 'agent-1',
+              worktreeId: 'wt-a',
+              totalTokens: 100,
+              totalCostUsd: 0.42,
+              worktreePath: '/tmp/worktrees/wt-a',
+            },
+          ],
+        },
+      ],
+      taskDag: [
+        {
+          id: 'slot-a',
+          title: 'Build shell',
+          description: 'Build',
+          status: 'TASK_STATUS_REVIEW',
+          assignedAgentId: 'agent-1',
+          projectId: 'proj-a',
+          dependencyIds: [],
+        },
+      ],
+      totalSessionCost: 1,
+      sessionBudgetMaxUsd: 25,
+      lastEventSequence: 1,
+    }),
+  );
+
+  cache.applyEvent(
+    normalizeEvent({
+      eventId: 'evt-vr-2',
+      timestampMs: 900,
+      eventSequence: 2,
+      verificationResult: {
+        slotId: 'slot-a',
+        projectId: 'proj-a',
+        success: false,
+        step: 'cargo test',
+        command: 'cargo test',
+        statusCode: 101,
+        stdout: '',
+        stderr: 'test failed',
+      },
+    }),
+  );
+
+  const result = cache.getVerificationResult('slot-a');
+  assert.ok(result);
+  assert.equal(result.slotId, 'slot-a');
+  assert.equal(result.success, false);
+  assert.equal(result.statusCode, 101);
+  assert.equal(result.stderr, 'test failed');
+
+  const allResults = cache.getVerificationResults();
+  assert.equal(allResults.size, 1);
+  assert.ok(allResults.has('slot-a'));
+
+  cache.dispose();
+});
+
+test('StateCache clears verification result when task transitions to WORKING', () => {
+  const cache = new StateCache();
+
+  cache.applySnapshot(
+    normalizeSnapshot({
+      projects: [
+        {
+          id: 'proj-a',
+          displayName: 'Project A',
+          repoPath: '/tmp/project-a',
+          color: '#00bcd4',
+          tags: [],
+          budgetMaxUsd: 25,
+          budgetWarnUsd: 10,
+          currentCostUsd: 1,
+          slots: [
+            {
+              id: 'slot-a',
+              projectId: 'proj-a',
+              task: 'Build shell',
+              mode: 'AGENT_MODE_PLAN',
+              branch: 'agent/slot-a',
+              currentAgentId: 'agent-1',
+              worktreeId: 'wt-a',
+              totalTokens: 100,
+              totalCostUsd: 0.42,
+              worktreePath: '/tmp/worktrees/wt-a',
+            },
+          ],
+        },
+      ],
+      taskDag: [
+        {
+          id: 'slot-a',
+          title: 'Build shell',
+          description: 'Build',
+          status: 'TASK_STATUS_REVIEW',
+          assignedAgentId: 'agent-1',
+          projectId: 'proj-a',
+          dependencyIds: [],
+        },
+      ],
+      totalSessionCost: 1,
+      sessionBudgetMaxUsd: 25,
+      lastEventSequence: 1,
+    }),
+  );
+
+  // Add a verification result
+  cache.applyEvent(
+    normalizeEvent({
+      eventId: 'evt-vr-3',
+      timestampMs: 1000,
+      eventSequence: 2,
+      verificationResult: {
+        slotId: 'slot-a',
+        projectId: 'proj-a',
+        success: false,
+        step: 'cargo build',
+        command: 'cargo build',
+        statusCode: 1,
+        stdout: '',
+        stderr: 'error',
+      },
+    }),
+  );
+
+  assert.ok(cache.getVerificationResult('slot-a'));
+
+  // Transition task to WORKING — should clear the verification result
+  cache.applyEvent(
+    normalizeEvent({
+      eventSequence: 3,
+      taskStatusChanged: {
+        taskId: 'slot-a',
+        newStatus: 'TASK_STATUS_WORKING',
+        agentId: 'agent-1',
+      },
+    }),
+  );
+
+  assert.equal(cache.getVerificationResult('slot-a'), undefined);
+  assert.equal(cache.getVerificationResults().size, 0);
 
   cache.dispose();
 });

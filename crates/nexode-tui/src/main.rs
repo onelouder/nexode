@@ -706,6 +706,7 @@ mod tests {
             total_session_cost: 0.0,
             session_budget_max_usd: 0.0,
             last_event_sequence: 10,
+            worktrees: Vec::new(),
         };
         let event = HypervisorEvent {
             event_id: "evt-1".to_string(),
@@ -732,6 +733,7 @@ mod tests {
             total_session_cost: 0.0,
             session_budget_max_usd: 0.0,
             last_event_sequence: 11,
+            worktrees: Vec::new(),
         };
         let event = HypervisorEvent {
             event_id: "evt-1".to_string(),

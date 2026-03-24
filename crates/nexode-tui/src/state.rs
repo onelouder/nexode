@@ -473,6 +473,7 @@ mod tests {
                     worktree_id: "wt-a".to_string(),
                     total_tokens: 12,
                     total_cost_usd: 0.5,
+                    worktree_path: String::new(),
                 }],
             }],
             task_dag: vec![TaskNode {
@@ -487,6 +488,7 @@ mod tests {
             total_session_cost: 2.5,
             session_budget_max_usd: 10.0,
             last_event_sequence: 42,
+            worktrees: Vec::new(),
         }
     }
 

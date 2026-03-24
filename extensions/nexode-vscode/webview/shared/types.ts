@@ -35,5 +35,15 @@ export interface MoveTaskMessage {
   target: TaskStatusName;
 }
 
+export interface ViewSlotOutputMessage {
+  type: 'viewSlotOutput';
+  slotId: string;
+}
+
+export interface OpenSlotDiffMessage {
+  type: 'openSlotDiff';
+  slotId: string;
+}
+
 export type HostToWebviewMessage = HostStateMessage;
-export type WebviewToHostMessage = ReadyMessage | MoveTaskMessage;
+export type WebviewToHostMessage = ReadyMessage | MoveTaskMessage | ViewSlotOutputMessage | OpenSlotDiffMessage;
