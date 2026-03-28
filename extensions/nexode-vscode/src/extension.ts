@@ -6,6 +6,7 @@ import { registerCommands } from './commands';
 import { NexodeDecorationProvider } from './decoration-provider';
 import { DiagnosticManager } from './diagnostic-manager';
 import { KanbanPanel } from './kanban-panel';
+import { MergeTreeProvider } from './merge-tree';
 import { OutputChannelManager } from './output-channel-manager';
 import { SlotTreeProvider } from './slot-tree-provider';
 import { StateCache } from './state';
@@ -30,10 +31,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const kanbanPanel = new KanbanPanel(context.extensionUri, state, client);
   const diagnosticManager = new DiagnosticManager(state);
   const decorationProvider = new NexodeDecorationProvider(state);
+  const mergeTreeProvider = new MergeTreeProvider(state);
   const workspaceFolderManager = new WorkspaceFolderManager(state);
   const outputChannelManager = new OutputChannelManager(state);
   const treeView = vscode.window.createTreeView('nexodeSlots', {
     treeDataProvider: treeProvider,
+    showCollapseAll: true,
+  });
+  const mergeTreeView = vscode.window.createTreeView('nexodeMergeQueue', {
+    treeDataProvider: mergeTreeProvider,
     showCollapseAll: true,
   });
 
@@ -49,9 +55,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     kanbanPanel,
     diagnosticManager,
     decorationProvider,
+    mergeTreeProvider,
     workspaceFolderManager,
     outputChannelManager,
     treeView,
+    mergeTreeView,
     vscode.window.registerFileDecorationProvider(decorationProvider),
     vscode.window.registerWebviewViewProvider('nexodeSynapseSidebar', synapseSidebarProvider, {
       webviewOptions: {
@@ -115,6 +123,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       const uri = vscode.Uri.file(slot.slot.worktreePath);
       await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
+    }),
+    vscode.commands.registerCommand('nexode.mergeApprove', async (node?: { slotId?: string }) => {
+      const slotId = node?.slotId;
+      if (!slotId) return;
+      try {
+        await client.dispatchCommand({
+          commandId: `merge-approve-${Date.now()}`,
+          moveTask: { taskId: slotId, target: 'TASK_STATUS_MERGE_QUEUE' },
+        });
+      } catch {
+        void vscode.window.showErrorMessage(`Failed to approve slot ${slotId}`);
+      }
+    }),
+    vscode.commands.registerCommand('nexode.mergeReject', async (node?: { slotId?: string }) => {
+      const slotId = node?.slotId;
+      if (!slotId) return;
+      try {
+        await client.dispatchCommand({
+          commandId: `merge-reject-${Date.now()}`,
+          moveTask: { taskId: slotId, target: 'TASK_STATUS_WORKING' },
+        });
+      } catch {
+        void vscode.window.showErrorMessage(`Failed to reject slot ${slotId}`);
+      }
+    }),
+    vscode.commands.registerCommand('nexode.mergePause', async (node?: { slotId?: string }) => {
+      const slotId = node?.slotId;
+      if (!slotId) return;
+      try {
+        await client.dispatchCommand({
+          commandId: `merge-pause-${Date.now()}`,
+          moveTask: { taskId: slotId, target: 'TASK_STATUS_PAUSED' },
+        });
+      } catch {
+        void vscode.window.showErrorMessage(`Failed to pause slot ${slotId}`);
+      }
     }),
     ...registerCommands(client, state, async () => {
       await vscode.commands.executeCommand('workbench.view.extension.nexode');
